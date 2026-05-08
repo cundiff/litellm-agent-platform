@@ -242,7 +242,12 @@ export function Sidebar() {
         {/* Recent sessions across agents */}
         {recentSessions.length > 0 ? (
           <>
-            <SectionHeader label="Recent" count={recentSessions.length} />
+            <SectionHeader
+              label="Recent"
+              count={recentSessions.length}
+              href="/sessions"
+              active={pathname === "/sessions"}
+            />
             <ul className="mb-3 space-y-px">
               {recentSessions.map((s) => {
                 const href = `/sessions/${s.id}`;
@@ -287,7 +292,12 @@ export function Sidebar() {
         ) : null}
 
         {/* Agents — each row is collapsible to show its sessions. */}
-        <SectionHeader label="Agents" count={sortedAgents.length} />
+        <SectionHeader
+          label="Agents"
+          count={sortedAgents.length}
+          href="/agents"
+          active={pathname === "/agents"}
+        />
         <ul className="space-y-px">
           {sortedAgents.length === 0 ? (
             <li className="px-2 py-1 text-[11px] text-muted-foreground">
@@ -448,7 +458,7 @@ function SectionHeader({ label, count, href, active }: SectionHeaderProps) {
             "flex h-6 items-center gap-2 rounded-md px-2 text-[10px] font-medium uppercase tracking-wider transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
             active
               ? "bg-sidebar-accent text-foreground"
-              : "text-muted-foreground hover:text-foreground",
+              : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground",
           )}
         >
           {inner}
