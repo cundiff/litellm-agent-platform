@@ -192,7 +192,7 @@ export default function AgentDetailPage({ params }: PageProps) {
                 <AgentAvatar
                   name={agent.name ?? agent.id}
                   pfpUrl={agent.pfp_url}
-                  size={64}
+                  size={72}
                 />
               </button>
               <div className="min-w-0">
@@ -204,6 +204,11 @@ export default function AgentDetailPage({ params }: PageProps) {
                 >
                   {displayName}
                 </h1>
+                {agent.prompt?.trim() ? (
+                  <p className="mt-2 line-clamp-2 max-w-[520px] text-[14px] text-muted-foreground">
+                    {agent.prompt}
+                  </p>
+                ) : null}
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <Badge variant="secondary" className="font-mono text-[11px]">
                     {agent.model}
