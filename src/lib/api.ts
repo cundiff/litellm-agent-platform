@@ -1,6 +1,11 @@
 /**
  * Shared API helpers for talking to a LiteLLM proxy's managed_agents endpoints.
  *
+ * The browser never talks to the proxy directly. All requests go through the
+ * Next.js route handler at /api/proxy/[...path], which reads LITELLM_BASE_URL
+ * + LITELLM_API_KEY from server-side env and attaches the Authorization
+ * header on the outbound request. The key never leaves the server.
+ *
  * Endpoints used (all under /v1/managed_agents):
  *   GET    /dockerfiles                              — list configured harnesses
  *   GET    /sandbox-templates                        — list templates
@@ -12,36 +17,32 @@
  *   GET    /sessions/{id}                            — one session
  *   DELETE /sessions/{id}                            — terminate session
  *   POST   /sessions/{id}/message                    — passthrough chat message
- *
- * Resolution order:
- *   - Base URL: localStorage("LITELLM_PROXY_URL") || NEXT_PUBLIC_LITELLM_BASE_URL || "http://localhost:4000"
- *   - API key:  localStorage("LITELLM_API_KEY")   || NEXT_PUBLIC_LITELLM_API_KEY   || "sk-1234"
  */
 
-const FALLBACK_PROXY = "http://localhost:4000";
-const FALLBACK_KEY = "sk-1234";
+/**
+ * The browser-side base URL — always relative, always points at our own
+ * Next.js proxy route. Don't read NEXT_PUBLIC_* — that path leaked the API
+ * key into the bundle.
+ */
+const PROXY_PREFIX = "/api/proxy";
 
-export function getProxyBase(): string {
-  if (typeof window !== "undefined") {
-    const ls = window.localStorage.getItem("LITELLM_PROXY_URL");
-    if (ls) return ls;
-  }
-  return process.env.NEXT_PUBLIC_LITELLM_BASE_URL || FALLBACK_PROXY;
-}
+/**
+ * Returns the public LITELLM_BASE_URL from /api/config — used by the
+ * 'Call this agent' snippets to show users the actual URL they'd hit from
+ * outside the app. Cached for the lifetime of the page so we hit /api/config
+ * at most once.
+ */
+let _publicBasePromise: Promise<string> | null = null;
 
-export function getApiKey(): string {
-  if (typeof window !== "undefined") {
-    const ls = window.localStorage.getItem("LITELLM_API_KEY");
-    if (ls) return ls;
-  }
-  return process.env.NEXT_PUBLIC_LITELLM_API_KEY || FALLBACK_KEY;
-}
-
-export function buildHeaders(): HeadersInit {
-  return {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${getApiKey()}`,
-  };
+export function getPublicProxyBase(): Promise<string> {
+  if (_publicBasePromise) return _publicBasePromise;
+  _publicBasePromise = fetch("/api/config")
+    .then((r) => (r.ok ? r.json() : { base_url: "" }))
+    .then((j) =>
+      typeof j?.base_url === "string" ? j.base_url : "",
+    )
+    .catch(() => "");
+  return _publicBasePromise;
 }
 
 // ---------- Types ----------
@@ -180,13 +181,6 @@ function extractErrorMessage(detail: unknown, status: number): string {
 
 // ---------- Core fetch ----------
 
-/**
- * Static base URL resolved at module load (env var only). For runtime
- * resolution that respects localStorage overrides, call `getProxyBase()`.
- */
-export const PROXY_BASE: string =
-  process.env.NEXT_PUBLIC_LITELLM_BASE_URL || FALLBACK_PROXY;
-
 export interface ApiInit {
   headers?: Record<string, string>;
   signal?: AbortSignal;
@@ -198,15 +192,14 @@ export async function api<T>(
   body?: unknown,
   init?: ApiInit,
 ): Promise<T> {
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${getApiKey()}`,
-    ...(init?.headers ?? {}),
-  };
+  const headers: Record<string, string> = { ...(init?.headers ?? {}) };
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";
   }
 
-  const res = await fetch(`${getProxyBase()}${path}`, {
+  // Caller passes paths like "/v1/managed_agents/agents" — we route them
+  // through our server-side proxy so the API key never lives in the browser.
+  const res = await fetch(`${PROXY_PREFIX}${path}`, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
