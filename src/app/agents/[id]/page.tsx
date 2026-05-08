@@ -6,6 +6,8 @@ import { ChevronRight, Loader2, Play, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { AgentAvatar } from "@/components/agent-avatar";
+import { PfpUpload } from "@/components/pfp-upload";
 import {
   AgentRow,
   ApiError,
@@ -15,6 +17,7 @@ import {
   listSessions,
   listTemplates,
   spawnSession,
+  updateAgent,
 } from "@/lib/api";
 
 interface PageProps {
@@ -74,6 +77,8 @@ export default function AgentDetailPage({ params }: PageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [spawning, setSpawning] = useState(false);
+  const [editingPfp, setEditingPfp] = useState(false);
+  const [pfpSaving, setPfpSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -99,6 +104,27 @@ export default function AgentDetailPage({ params }: PageProps) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function handlePfpChange(next: string | null) {
+    if (!agent) return;
+    // Optimistic update — revert if PATCH fails.
+    const prev = agent.pfp_url ?? null;
+    setAgent({ ...agent, pfp_url: next });
+    setPfpSaving(true);
+    setError(null);
+    try {
+      const updated = await updateAgent(agent.id, {
+        pfp_url: next ?? "",
+      });
+      setAgent(updated);
+      setEditingPfp(false);
+    } catch (e) {
+      setAgent({ ...agent, pfp_url: prev });
+      setError(e instanceof ApiError ? e.message : (e as Error).message);
+    } finally {
+      setPfpSaving(false);
+    }
+  }
 
   async function handleSpawn() {
     if (!agent || spawning) return;
@@ -155,27 +181,41 @@ export default function AgentDetailPage({ params }: PageProps) {
         <>
           {/* Hero */}
           <header className="mt-6 flex flex-col gap-4 border-b pb-6 sm:flex-row sm:items-end sm:justify-between">
-            <div className="min-w-0">
-              <h1
-                className={
-                  "text-[26px] font-semibold tracking-tight leading-none " +
-                  (agent.name?.trim() ? "" : "text-muted-foreground")
-                }
+            <div className="flex min-w-0 items-center gap-4">
+              <button
+                type="button"
+                onClick={() => setEditingPfp(true)}
+                aria-label="Edit profile picture"
+                className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
-                {displayName}
-              </h1>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <Badge variant="secondary" className="font-mono text-[11px]">
-                  {agent.model}
-                </Badge>
-                {template ? (
-                  <Badge variant="outline" className="font-mono text-[11px]">
-                    {template.dockerfile_id}
+                <AgentAvatar
+                  name={agent.name ?? agent.id}
+                  pfpUrl={agent.pfp_url}
+                  size={64}
+                />
+              </button>
+              <div className="min-w-0">
+                <h1
+                  className={
+                    "text-[26px] font-semibold tracking-tight leading-none " +
+                    (agent.name?.trim() ? "" : "text-muted-foreground")
+                  }
+                >
+                  {displayName}
+                </h1>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary" className="font-mono text-[11px]">
+                    {agent.model}
                   </Badge>
-                ) : null}
-                <span className="text-[12px] text-muted-foreground">
-                  Created {formatTime(agent.created_at)}
-                </span>
+                  {template ? (
+                    <Badge variant="outline" className="font-mono text-[11px]">
+                      {template.dockerfile_id}
+                    </Badge>
+                  ) : null}
+                  <span className="text-[12px] text-muted-foreground">
+                    Created {formatTime(agent.created_at)}
+                  </span>
+                </div>
               </div>
             </div>
             <Button
@@ -192,6 +232,32 @@ export default function AgentDetailPage({ params }: PageProps) {
               {spawning ? "Spawning…" : "Spawn session"}
             </Button>
           </header>
+
+          {editingPfp ? (
+            <section className="mt-6 rounded-lg border bg-card/40 p-4">
+              <div className="mb-2 flex items-center justify-between">
+                <h2 className="text-[12px] font-medium uppercase tracking-wider text-muted-foreground">
+                  Profile picture
+                </h2>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEditingPfp(false)}
+                  disabled={pfpSaving}
+                  className="h-7 px-2 text-muted-foreground hover:text-foreground"
+                >
+                  Done
+                </Button>
+              </div>
+              <PfpUpload
+                name={agent.name ?? agent.id}
+                value={agent.pfp_url}
+                onChange={(next) => void handlePfpChange(next)}
+                disabled={pfpSaving}
+              />
+            </section>
+          ) : null}
 
           {spawning ? (
             <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
