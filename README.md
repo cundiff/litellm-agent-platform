@@ -2,7 +2,7 @@
 
 Self-hosted control plane for sandboxed coding agents. An agent is a `(model, prompt, repo)` spec; spawning a session boots a fresh AWS Fargate task running the [opencode](https://opencode.ai) harness against that repo. Models route through a [LiteLLM](https://github.com/BerriAI/litellm) gateway. One Next.js app + a sidecar reconciler — no second service.
 
-<img width="1999" height="1223" alt="Xnapper-2026-05-08-19 01 48" src="https://github.com/user-attachments/assets/0055f0ef-521c-4d46-bd07-105370e151c2" />
+<img width="1997" height="1219" alt="Xnapper-2026-05-08-19 10 50" src="https://github.com/user-attachments/assets/c0c2c2f8-d9e2-4821-b73a-e3971dac5169" />
 
 ---
 
