@@ -7,6 +7,9 @@ Self-hosted control plane for sandboxed agents on AWS Fargate. Each agent binds 
 
 ## 2. Use your Agent on the UI 
 
+<img width="1164" height="720" alt="d7" src="https://github.com/user-attachments/assets/a39e1d74-9fd1-4db9-b090-9bffc49b09d5" />
+
+
 
 ## Setup
 
