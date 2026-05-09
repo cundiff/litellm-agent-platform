@@ -28,7 +28,8 @@ model Agent {
   created_at          DateTime @default(now())
   created_by          String?
 
-  sessions Session[]
+  sessions   Session[]
+  warm_tasks WarmTask[]
 
   @@index([created_by])
   @@map("managed_agent")
@@ -55,4 +56,33 @@ model Session {
   @@index([status])
   @@index([last_seen_at])
   @@map("managed_agent_session")
+}
+
+// Pre-provisioned Fargate task waiting to be claimed by a session create.
+// One row per pool slot. Tasks are bound to a single agent because the
+// opencode harness reads REPO_URL / BRANCH / AGENT_PROMPT from container
+// env at boot, so a warm task for agent A can't serve a request for agent B.
+//
+// Lifecycle: provisioning -> warm -> claimed -> (row deleted; task lives on
+// inside the corresponding Session). dead is the terminal failure state —
+// reconciler stops the underlying ECS task and the row is removed on the
+// next sweep.
+model WarmTask {
+  warm_task_id   String    @id @default(uuid())
+  agent_id       String
+  status         String    @default("provisioning") // provisioning | warm | claimed | dead
+  task_arn       String?
+  sandbox_url    String?
+  failure_reason String?
+  created_at     DateTime  @default(now())
+  ready_at       DateTime?
+  claimed_at     DateTime?
+
+  agent Agent @relation(fields: [agent_id], references: [agent_id], onDelete: Cascade)
+
+  // Primary claim path: oldest warm row for this agent.
+  @@index([agent_id, status, ready_at])
+  // Sweeps: TTL recycle, orphan detection.
+  @@index([status, created_at])
+  @@map("managed_agent_warm_task")
 }
