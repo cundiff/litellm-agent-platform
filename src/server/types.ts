@@ -198,6 +198,7 @@ export interface ReconcileResult {
   inspected: number;
   stopped: number;
   failed_creating: number;
+  idle_killed: number;
 }
 
 // must export:
@@ -268,4 +269,7 @@ export const TAG_SESSION_ID = "litellm_session_id";
 export const TAG_AGENT_ID = "litellm_agent_id";
 export const HARNESS_OPENCODE = "opencode";
 export const SESSION_CREATING_TIMEOUT_MS = 600_000;
+// Ready sessions with no message activity (last_seen_at) older than this are
+// reaped by the reconciler — keeps Fargate cost bounded for forgotten tabs.
+export const SESSION_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 export const RECONCILE_NEW_TASK_GRACE_MS = 300_000;

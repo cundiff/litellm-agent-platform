@@ -81,6 +81,9 @@ async function bringUpSession(
       status: "ready",
       sandbox_url,
       harness_session_id,
+      // Seed the idle clock at ready-transition so the reconciler doesn't
+      // count container boot time toward the idle window.
+      last_seen_at: new Date(),
       // The harness reply is an opaque blob; Prisma's Json column wants
       // InputJsonValue. Skip the field entirely if no initial_prompt was sent.
       response: response

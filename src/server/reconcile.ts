@@ -24,6 +24,7 @@ import { listTaggedTasks, stopTask } from "@/server/fargate";
 import {
   RECONCILE_NEW_TASK_GRACE_MS,
   SESSION_CREATING_TIMEOUT_MS,
+  SESSION_IDLE_TIMEOUT_MS,
   type ReconcileResult,
 } from "@/server/types";
 
@@ -111,7 +112,43 @@ export async function reconcileOrphans(): Promise<ReconcileResult> {
     }
   }
 
-  return { inspected, stopped, failed_creating };
+  // Idle sweep: ready sessions with no message activity past the idle window.
+  // last_seen_at falls back to created_at if no messages were ever sent.
+  const idleCutoff = new Date(now - SESSION_IDLE_TIMEOUT_MS);
+  const idle = await prisma.session.findMany({
+    where: {
+      status: "ready",
+      OR: [
+        { last_seen_at: { lt: idleCutoff } },
+        { AND: [{ last_seen_at: null }, { created_at: { lt: idleCutoff } }] },
+      ],
+    },
+  });
+
+  let idle_killed = 0;
+  for (const s of idle) {
+    if (s.task_arn) {
+      await safeStopTask(s.task_arn, "reconciler: idle timeout");
+    }
+    try {
+      await prisma.session.update({
+        where: { session_id: s.session_id },
+        data: {
+          status: "dead",
+          failure_reason: "idle timeout",
+          stopped_at: new Date(),
+        },
+      });
+      idle_killed += 1;
+    } catch (e) {
+      console.warn(
+        `reconcile: failed to mark idle session ${s.session_id} dead:`,
+        e,
+      );
+    }
+  }
+
+  return { inspected, stopped, failed_creating, idle_killed };
 }
 
 export async function stopSessionsForAgent(agent_id: string): Promise<number> {

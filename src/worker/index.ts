@@ -15,9 +15,10 @@ const intervalMs = env.RECONCILE_INTERVAL_SECONDS * 1000;
 async function tick() {
   try {
     const r = await reconcileOrphans();
-    if (r.stopped > 0 || r.failed_creating > 0) {
+    if (r.stopped > 0 || r.failed_creating > 0 || r.idle_killed > 0) {
       console.log(
-        `reconcile: inspected=${r.inspected} stopped=${r.stopped} failed_creating=${r.failed_creating}`,
+        `reconcile: inspected=${r.inspected} stopped=${r.stopped} ` +
+          `failed_creating=${r.failed_creating} idle_killed=${r.idle_killed}`,
       );
     }
   } catch (e) {
