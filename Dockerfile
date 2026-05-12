@@ -16,7 +16,7 @@ WORKDIR /app
 
 # Only copy lockfiles first so `npm ci` is cached unless deps change.
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --legacy-peer-deps
 
 # ---------- 2. build ----------
 FROM node:20-alpine AS builder

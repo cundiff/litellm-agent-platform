@@ -29,8 +29,8 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { foldSdkMessages, type FoldedMessage } from "@litellm/agent-sdk";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { foldSdkMessages, type FoldedMessage } from "@/lib/fold-sdk-messages";
 
 export type SdkStreamStatus =
   | "idle" // not connected (e.g. session not ready yet)
