@@ -20,8 +20,6 @@ const EnvSchema = z.object({
   MASTER_KEY: z.string().min(8),
   K8S_NAMESPACE: z.string().min(1).default("default"),
   K8S_NODE_HOST: z.string().optional().default("host.docker.internal"),
-  K8S_NODEPORT_MIN: z.coerce.number().int().min(30000).max(32767).default(30000),
-  K8S_NODEPORT_MAX: z.coerce.number().int().min(30000).max(32767).default(30099),
   K8S_IMAGE_PULL_POLICY: z.enum(["Never", "IfNotPresent", "Always"]).default("Never"),
   K8S_HARNESS_IMAGE: z.string().min(1).default("opencode-sandbox:dev"),
   K8S_API_SERVER: z.string().optional().default(""),
@@ -94,11 +92,6 @@ function parseEnv(): ServerEnv {
     );
   }
   const data = parsed.data;
-  if (data.K8S_NODEPORT_MIN > data.K8S_NODEPORT_MAX) {
-    throw new Error(
-      `K8S_NODEPORT_MIN (${data.K8S_NODEPORT_MIN}) > K8S_NODEPORT_MAX (${data.K8S_NODEPORT_MAX})`,
-    );
-  }
   // Render auto-injects RENDER_EXTERNAL_URL on every web service with the
   // public https URL. Fall back to it when LAP_BASE_URL is unset so the
   // memory tools (and any future cross-service caller) auto-resolve on

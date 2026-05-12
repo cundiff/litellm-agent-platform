@@ -303,7 +303,6 @@ export interface ApiAdminStats {
   runtime: {
     namespace: string;
     harness_image: string;
-    nodeport_range: string; // "min-max"
     container_port: number;
     reconcile_interval_seconds: number;
   };
@@ -357,10 +356,6 @@ export interface ServerEnv {
   // with kind + docker-compose this is "host.docker.internal" (mapped via
   // extra_hosts). For in-cluster deployments leave blank to use Pod IP.
   K8S_NODE_HOST: string;
-  // NodePort range that's exposed on the host. Must match the kind cluster's
-  // extraPortMappings (see bin/kind-up.sh). Comma-separated "min,max".
-  K8S_NODEPORT_MIN: number; // default 30000
-  K8S_NODEPORT_MAX: number; // default 30099
   // Image pull policy for Sandbox pods. "Never" for local kind-loaded images,
   // "IfNotPresent" or "Always" for registry-backed images.
   K8S_IMAGE_PULL_POLICY: "Never" | "IfNotPresent" | "Always";

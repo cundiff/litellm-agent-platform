@@ -166,7 +166,6 @@ export const GET = wrap(async (req: Request) => {
     runtime: {
       namespace: env.K8S_NAMESPACE,
       harness_image: env.K8S_HARNESS_IMAGE,
-      nodeport_range: `${env.K8S_NODEPORT_MIN}-${env.K8S_NODEPORT_MAX}`,
       container_port: env.CONTAINER_PORT,
       reconcile_interval_seconds: env.RECONCILE_INTERVAL_SECONDS,
     },

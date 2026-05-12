@@ -270,8 +270,16 @@ export async function reconcileOrphans(): Promise<ReconcileResult> {
   // row stays ready forever and send_message hits a dead public IP until the
   // idle window expires. Tasks reappear in listTaggedTasks only while
   // RUNNING/PENDING, so absence here means gone.
+  //
+  // Exclude STOPPED tasks: a Sandbox CR in Failed/Succeeded phase maps to
+  // last_status="STOPPED" in listTaggedTasks. Including those in liveArns
+  // would hide OOMKilled pods from the ghost sweep — the session row stays
+  // "ready" forever even though the pod is dead.
   const liveArns = new Set(
-    tasks.map((t) => t.task_arn).filter((a): a is string => !!a),
+    tasks
+      .filter((t) => t.last_status !== "STOPPED")
+      .map((t) => t.task_arn)
+      .filter((a): a is string => !!a),
   );
   const readyRows = await prisma.session.findMany({
     where: { status: "ready", task_arn: { not: null } },
