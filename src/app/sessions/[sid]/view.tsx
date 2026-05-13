@@ -25,6 +25,7 @@ import {
   RefreshCw,
   Copy,
   Check,
+  Activity,
 } from "lucide-react";
 import {
   ApiError,
@@ -43,6 +44,7 @@ import {
   sendMessageStream,
 } from "@/lib/api";
 import { AgentAvatar } from "@/components/agent-avatar";
+import { InspectorPanel } from "@/components/inspector-dialog";
 import {
   SdkStreamPanel,
   useSdkMessageStream,
@@ -233,10 +235,10 @@ export default function SessionThreadView() {
     return "";
   }, [session, agent]);
 
-  // Live SDKMessage stream — additive next to the historical /messages
-  // replay below. We only open the EventSource once the session is `ready`;
-  // the harness's event bus isn't running before then.
-  const sdkStreamEnabled = session?.status === "ready" && !!sessionId;
+  // Disabled — the passive EventSource was double-rendering with the
+  // /message_stream-driven assistant message. /message_stream is the single
+  // source of truth for live updates now.
+  const sdkStreamEnabled = false;
   const { messages: sdkMessages, status: sdkStreamStatus } =
     useSdkMessageStream(sessionId, sdkStreamEnabled);
 
@@ -473,17 +475,12 @@ export default function SessionThreadView() {
         // renders distinctly. After `done` we refreshThread() to pull
         // canonical state (tool inputs/outputs that the bus deltas don't
         // reconstruct on their own).
-        type StreamPart = { id: string; type: "text" | "thinking"; text: string };
-        const partsState: Map<string, StreamPart> = new Map();
+        // partsState stores ANY part type the harness produces (text /
+        // thinking / reasoning / tool). The order tracks insertion, which
+        // matches the order parts were first observed on the bus.
+        const partsState: Map<string, HarnessMessagePart> = new Map();
         const renderStreaming = () => {
-          // Stable order: insertion order matches the order parts were first
-          // seen on the bus, which matches the order the model produced
-          // them (thinking before text, etc).
-          const partsArray = Array.from(partsState.values()).map((p) => ({
-            id: p.id,
-            type: p.type,
-            text: p.text,
-          })) as HarnessMessagePart[];
+          const partsArray = Array.from(partsState.values());
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId
@@ -497,15 +494,15 @@ export default function SessionThreadView() {
           delta: string,
           field: "text" | "thinking",
         ) => {
-          const cur = partsState.get(partID) ?? {
+          const cur = (partsState.get(partID) ?? {
             id: partID,
             type: field,
             text: "",
-          };
-          cur.text += delta;
-          // If a partID flips field mid-stream (shouldn't happen, but be
-          // defensive), trust the latest field type.
-          cur.type = field;
+          }) as HarnessMessagePart;
+          (cur as { text?: string }).text =
+            ((cur as { text?: string }).text || "") + delta;
+          // If a partID flips field mid-stream, trust the latest field type.
+          (cur as { type?: string }).type = field;
           partsState.set(partID, cur);
         };
         await sendMessageStream(
@@ -524,22 +521,16 @@ export default function SessionThreadView() {
               ingestDelta(partID, delta, field);
               renderStreaming();
             } else if (ev.type === "message.part.updated") {
-              // Authoritative replacement when we missed earlier deltas
-              // (or when the model bundles a block without per-token deltas,
-              // which is what Haiku does for thinking today).
-              const part = props.part as
-                | { id?: string; type?: string; text?: string }
-                | undefined;
-              if (
-                part?.id &&
-                (part.type === "text" || part.type === "thinking") &&
-                typeof part.text === "string"
-              ) {
-                partsState.set(part.id, {
-                  id: part.id,
-                  type: part.type,
-                  text: part.text,
-                });
+              // Authoritative replacement. The harness sends the FULL part
+              // object — text deltas resolved, tool inputs/outputs filled.
+              // Store it verbatim so tool blocks render in the streaming
+              // view too (not just after refreshThread).
+              const part = props.part as HarnessMessagePart | undefined;
+              const rawId = part
+                ? (part as Record<string, unknown>).id
+                : undefined;
+              if (part && typeof rawId === "string") {
+                partsState.set(rawId, part);
                 renderStreaming();
               }
             }
@@ -597,6 +588,8 @@ export default function SessionThreadView() {
     [handleSend],
   );
 
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+
   return (
     <div className="sessions-app flex w-full h-full bg-white text-gray-900 overflow-hidden">
       <MainPanel
@@ -619,6 +612,13 @@ export default function SessionThreadView() {
         restarting={restarting}
         restartError={restartError}
         handleRestart={handleRestart}
+        inspectorOpen={inspectorOpen}
+        setInspectorOpen={setInspectorOpen}
+      />
+      <InspectorPanel
+        open={inspectorOpen}
+        onClose={() => setInspectorOpen(false)}
+        sessionId={sessionId}
       />
     </div>
   );
@@ -648,6 +648,8 @@ interface MainPanelProps {
   restarting: boolean;
   restartError: string | null;
   handleRestart: () => void;
+  inspectorOpen: boolean;
+  setInspectorOpen: (v: boolean) => void;
 }
 
 function MainPanel({
@@ -670,6 +672,8 @@ function MainPanel({
   restarting,
   restartError,
   handleRestart,
+  inspectorOpen,
+  setInspectorOpen,
 }: MainPanelProps) {
   const sessionShortId = session?.id ? session.id.slice(0, 8) : "—";
   const statusLabel = session?.status ?? "unknown";
@@ -748,6 +752,20 @@ function MainPanel({
           )}
         </div>
         <div className="flex items-center gap-2 text-gray-400">
+          <button
+            type="button"
+            onClick={() => session && setInspectorOpen(!inspectorOpen)}
+            disabled={!session}
+            title="Inspector — tail the platform envelope + raw harness bus for this session"
+            className={`inline-flex items-center gap-1.5 text-[12px] border rounded px-2 py-1 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+              inspectorOpen
+                ? "bg-violet-50 border-violet-200 text-violet-700 hover:bg-violet-100"
+                : "border-gray-200 text-gray-600 hover:bg-gray-100"
+            }`}
+          >
+            <Activity className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Inspect</span>
+          </button>
           <button
             type="button"
             onClick={() => session && setDiagnoseOpen(true)}
@@ -864,11 +882,6 @@ function MainPanel({
             message appears in both, the streaming row is fresher and
             wins by being rendered first.
           */}
-          <SdkStreamPanel
-            messages={sdkMessages}
-            status={sdkStreamStatus}
-          />
-
           {messages.map((m, i) => (
             <MessageBlock
               key={m.id}
@@ -900,6 +913,7 @@ function MainPanel({
           />
         </div>
       </div>
+
     </div>
   );
 }
