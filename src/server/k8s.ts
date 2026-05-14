@@ -265,48 +265,77 @@ async function buildContainerEnv(
     SESSION_ID: phaseToken,
     HARNESS_PROGRESS_TOKEN: phaseToken,
   };
-  // Precedence (lowest → highest): passthrough → agent-level env_vars → per-session env_vars → required base.
-  const rawAgentEnvVars =
+  // Precedence (lowest → highest): passthrough → per-session env_vars → required base.
+  // NOTE: agent.env_vars (the long-lived per-agent secrets) are intentionally
+  // OMITTED from the harness env — vault holds the real values and writes
+  // KEY=stub_… into /lap-shared/env, which the harness entrypoint sources.
+  // Per-session env_vars stay direct (short-lived overrides, out of scope
+  // for the stub model).
+  const merged: Record<string, string> = {
+    ...env.containerEnvPassthrough,
+    ...(env_vars ?? {}),
+    ...base,
+    // Route outbound HTTPS through the in-pod vault sidecar so it can swap
+    // stubs for real secrets at egress. Vault's CA is baked into the
+    // harness image's system trust store at build time, which covers
+    // git/curl/python/go/ruby. Node fetch and SEA binaries read
+    // NODE_EXTRA_CA_CERTS, not the OS store — point them at the bundle.
+    HTTPS_PROXY: "http://127.0.0.1:14322",
+    NO_PROXY: "localhost,127.0.0.1,.svc.cluster.local,.svc,.cluster.local",
+    NODE_EXTRA_CA_CERTS: "/etc/ssl/certs/ca-certificates.crt",
+    VAULT_ENABLED: "true",
+  };
+  return Object.entries(merged).map(([name, value]) => ({ name, value }));
+}
+
+// Sidecar env. Each entry from the agent's encrypted env_vars surfaces as
+// REAL_<KEY> here — vault holds the real value while the harness only ever
+// sees a freshly minted stub.
+function buildVaultEnv(opts: RunTaskOpts): Array<{ name: string; value: string }> {
+  const { agent } = opts;
+  const raw =
     agent.env_vars &&
     typeof agent.env_vars === "object" &&
     !Array.isArray(agent.env_vars)
       ? (agent.env_vars as Record<string, string>)
       : {};
-  const agentEnvVars = Object.fromEntries(
-    Object.entries(rawAgentEnvVars).map(([k, v]) => [k, decrypt(v)]),
-  );
-  const merged: Record<string, string> = {
-    ...env.containerEnvPassthrough,
-    ...agentEnvVars,
-    ...(env_vars ?? {}),
-    ...base,
-  };
-  return Object.entries(merged).map(([name, value]) => ({ name, value }));
+  return Object.entries(raw).map(([k, v]) => ({ name: `REAL_${k}`, value: decrypt(v) }));
 }
 
 // ---------------------------------------------------------------------------
 // runTask — create Sandbox CR + NodePort Service
 // ---------------------------------------------------------------------------
 
+interface VolumeMount {
+  name: string;
+  mountPath: string;
+  readOnly?: boolean;
+}
+interface SandboxContainer {
+  name: string;
+  image: string;
+  imagePullPolicy: string;
+  ports?: Array<{ containerPort: number }>;
+  env: Array<{ name: string; value: string }>;
+  volumeMounts?: VolumeMount[];
+  resources: {
+    requests: { cpu: string; memory: string };
+    limits: { cpu: string; memory: string };
+  };
+}
+interface SandboxVolume {
+  name: string;
+  emptyDir?: { medium?: string };
+  secret?: { secretName: string };
+}
 interface SandboxSpec {
   podTemplate: {
-    metadata?: {
-      labels?: Record<string, string>;
-    };
+    metadata?: { labels?: Record<string, string> };
     spec: {
       restartPolicy: string;
       priorityClassName?: string;
-      containers: Array<{
-        name: string;
-        image: string;
-        imagePullPolicy: string;
-        ports: Array<{ containerPort: number }>;
-        env: Array<{ name: string; value: string }>;
-        resources: {
-          requests: { cpu: string; memory: string };
-          limits: { cpu: string; memory: string };
-        };
-      }>;
+      containers: SandboxContainer[];
+      volumes?: SandboxVolume[];
     };
   };
 }
@@ -347,23 +376,38 @@ export async function runTask(
           containers: [
             {
               name: CONTAINER_NAME,
-              // Resolve image at session-creation time from current env vars
-              // so image updates take effect immediately without recreating agents.
               image: resolveHarnessImage(agent.harness_id, env),
               imagePullPolicy: env.K8S_IMAGE_PULL_POLICY,
               ports: [{ containerPort: agent.container_port }],
               env: await buildContainerEnv(opts),
+              volumeMounts: [
+                { name: "lap-shared", mountPath: "/lap-shared", readOnly: true },
+              ],
               resources: {
-                // Opencode is mostly idle between LLM round-trips — it's a
-                // thin HTTP server forwarding to the model. Right-size the
-                // request so a single-node kind cluster can fit a useful
-                // number of warm + active sandboxes (4 vCPU / ~6GiB usable
-                // typically). Limits stay generous so a chatty session
-                // burst isn't artificially throttled.
                 requests: { cpu: "100m", memory: "256Mi" },
                 limits: { cpu: "1", memory: "1Gi" },
               },
             },
+            {
+              // vault sidecar — holds the real secrets, MITMs egress, swaps
+              // stubs for real values at the wire.
+              name: "vault",
+              image: env.K8S_VAULT_IMAGE,
+              imagePullPolicy: env.K8S_IMAGE_PULL_POLICY,
+              env: buildVaultEnv(opts),
+              volumeMounts: [
+                { name: "lap-shared", mountPath: "/lap-shared" },
+                { name: "vault-ca", mountPath: "/etc/vault-ca", readOnly: true },
+              ],
+              resources: {
+                requests: { cpu: "20m", memory: "80Mi" },
+                limits: { cpu: "200m", memory: "256Mi" },
+              },
+            },
+          ],
+          volumes: [
+            { name: "lap-shared", emptyDir: { medium: "Memory" } },
+            { name: "vault-ca", secret: { secretName: "vault-ca" } },
           ],
         },
       },

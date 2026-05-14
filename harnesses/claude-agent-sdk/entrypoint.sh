@@ -6,6 +6,31 @@
 # clone-then-listen flow, same port.
 set -euo pipefail
 
+# vault sidecar handoff. When enabled, the sidecar writes a stub-env file
+# into /lap-shared once it's listening. Wait for it, source the stubs, and
+# the rest of the entrypoint sees only stubs in env. If vault never comes
+# up, unset the proxy env so direct HTTPS still works (degraded mode rather
+# than every outbound request hanging).
+if [ "${VAULT_ENABLED:-}" = "true" ]; then
+  for _ in $(seq 1 30); do
+    if [ -s /lap-shared/env ]; then break; fi
+    sleep 0.5
+  done
+  if [ ! -s /lap-shared/env ]; then
+    echo "[entrypoint] vault not ready after 15s — unsetting proxy, proceeding without stubs" >&2
+    unset HTTPS_PROXY HTTP_PROXY NO_PROXY
+  else
+    set -a
+    . /lap-shared/env
+    set +a
+    # Debian's git is libcurl-gnutls — doesn't auto-discover the system
+    # trust store reliably. Pin it to the bundle file (which has vault's
+    # CA baked in at image build time).
+    export GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt
+    echo "[entrypoint] vault stubs sourced ($(wc -l </lap-shared/env) keys)"
+  fi
+fi
+
 : "${LITELLM_API_KEY:?LITELLM_API_KEY required}"
 : "${LITELLM_API_BASE:?LITELLM_API_BASE required}"
 : "${LITELLM_DEFAULT_MODEL:?LITELLM_DEFAULT_MODEL required}"
