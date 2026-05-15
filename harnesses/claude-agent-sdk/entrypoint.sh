@@ -106,6 +106,20 @@ fi
 # Clone-only token: wipe so the LLM can't `printenv GIT_TOKEN` it back.
 unset GIT_TOKEN
 
+# Write any files injected by the agent template (LAP_FILE_N_DEST / LAP_FILE_N_CONTENT).
+i=0
+while true; do
+  dest_var="LAP_FILE_${i}_DEST"
+  content_var="LAP_FILE_${i}_CONTENT"
+  dest="${!dest_var:-}"
+  content="${!content_var:-}"
+  [ -z "$dest" ] && break
+  dest="${dest/#\~/$HOME}"
+  mkdir -p "$(dirname "$dest")"
+  printf '%s' "$content" | base64 -d > "$dest"
+  i=$((i + 1))
+done
+
 # Last point before `exec` replaces this process — there's no opportunity
 # to report after the server takes over.
 report_phase harness_listening

@@ -92,17 +92,17 @@ export default function NewAgentPage() {
       setName(t.name);
       setHarnessId(t.harness_id);
       setModel(t.model);
-      setSystemPrompt(
-        skillEdits[t.id] !== undefined
-          ? `${t.prompt}\n\n<!-- skill -->\n\n${skillEdits[t.id]}`
-          : `${t.prompt}\n\n<!-- skill -->\n\n${t.skill}`,
-      );
+      const parts = [t.prompt, t.skill ? `<!-- skill -->\n\n${skillEdits[t.id] ?? t.skill}` : ""].filter(Boolean);
+      setSystemPrompt(parts.join("\n\n"));
+      const templateVars = Object.entries(t.env_vars);
+      setEnvVars(templateVars.length > 0 ? templateVars : [["", ""]]);
     } else {
       // blank
       setName("");
       setHarnessId(DEFAULT_HARNESS_ID);
       setModel(DEFAULT_MODEL);
       setSystemPrompt("");
+      setEnvVars([["", ""]]);
     }
   }
 
@@ -873,7 +873,13 @@ export default function NewAgentPage() {
           <div className="sticky top-6">
             <Card className="overflow-hidden">
               <div className="flex border-b text-[13px]">
-                {(["overview", "skill", "prompt"] as const).map((tab) => (
+                {(["overview", "skill", "prompt"] as const)
+                  .filter((tab) => {
+                    if (tab === "skill") return !!selectedTemplate.skill;
+                    if (tab === "prompt") return !!selectedTemplate.prompt;
+                    return true;
+                  })
+                  .map((tab) => (
                   <button
                     key={tab}
                     type="button"
@@ -892,32 +898,50 @@ export default function NewAgentPage() {
               <CardContent className="pt-4">
                 {activeTemplateTab === "overview" && (
                   <div className="space-y-3 text-[13px]">
-                    <div>
-                      <p className="mb-1.5 text-xs font-medium uppercase tracking-widest text-muted-foreground">Tools</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {selectedTemplate.tools.map((tool) => (
-                          <span key={tool} className="rounded border border-border bg-muted px-2 py-0.5 font-mono text-[12px]">
-                            {tool}
+                    {selectedTemplate.files.length > 0 && (
+                      <div>
+                        <p className="mb-1.5 text-xs font-medium uppercase tracking-widest text-muted-foreground">Files</p>
+                        <div className="space-y-1">
+                          {selectedTemplate.files.map((f) => (
+                            <div key={f.template_path} className="flex items-center gap-2 font-mono text-[12px]">
+                              <span className="rounded border border-border bg-muted px-2 py-0.5">{f.template_path}</span>
+                              <span className="text-muted-foreground">→</span>
+                              <span className="text-muted-foreground">{f.sandbox_path}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {selectedTemplate.tools.length > 0 && (
+                      <div>
+                        <p className="mb-1.5 text-xs font-medium uppercase tracking-widest text-muted-foreground">Tools</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {selectedTemplate.tools.map((tool) => (
+                            <span key={tool} className="rounded border border-border bg-muted px-2 py-0.5 font-mono text-[12px]">
+                              {tool}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {selectedTemplate.skill_name && (
+                      <div>
+                        <p className="mb-1.5 text-xs font-medium uppercase tracking-widest text-muted-foreground">Skill</p>
+                        <div className="flex items-center gap-2">
+                          <span className="rounded border border-border bg-muted px-2 py-0.5 font-mono text-[12px]">
+                            {selectedTemplate.skill_name}
                           </span>
-                        ))}
+                          <button
+                            type="button"
+                            aria-label="View skill details"
+                            onClick={() => setActiveTemplateTab("skill")}
+                            className="text-[12px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                          >
+                            View →
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                    <div>
-                      <p className="mb-1.5 text-xs font-medium uppercase tracking-widest text-muted-foreground">Skill</p>
-                      <div className="flex items-center gap-2">
-                        <span className="rounded border border-border bg-muted px-2 py-0.5 font-mono text-[12px]">
-                          {selectedTemplate.skill_name}
-                        </span>
-                        <button
-                          type="button"
-                          aria-label="View skill details"
-                          onClick={() => setActiveTemplateTab("skill")}
-                          className="text-[12px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                        >
-                          View →
-                        </button>
-                      </div>
-                    </div>
+                    )}
                   </div>
                 )}
                 {activeTemplateTab === "skill" && (

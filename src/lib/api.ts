@@ -1091,6 +1091,11 @@ export function getAdminStats(): Promise<AdminStats> {
 
 // ---------- Templates ----------
 
+export interface TemplateFile {
+  template_path: string;
+  sandbox_path: string;
+}
+
 export interface AgentTemplate {
   id: string;
   name: string;
@@ -1104,6 +1109,8 @@ export interface AgentTemplate {
   skill: string;
   tools: string[];
   requirements: string | null;
+  env_vars: Record<string, string>;
+  files: TemplateFile[];
 }
 
 // ---------- Agent skill attachment ----------
