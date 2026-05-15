@@ -106,7 +106,7 @@ function fromRaw(raw: RawTemplate, base?: string): AgentTemplate {
 function loadFromJson(): AgentTemplate[] {
   try {
     const raw: RawTemplate[] = JSON.parse(readFileSync(JSON_FILE, "utf8"));
-    return raw.map((t) => fromRaw(t));
+    return raw.filter((t) => !t.id.startsWith("_")).map((t) => fromRaw(t));
   } catch {
     return [];
   }

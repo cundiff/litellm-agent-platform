@@ -1,5 +1,26 @@
 [
   {
+    "_comment": "Entries with id starting with _ are ignored by the loader — use for docs/examples.",
+    "id": "_sample",
+    "name": "Template name shown in the UI picker",
+    "description": "One-line description shown under the name.",
+    "icon": "🤖",
+    "tags": ["tag1", "tag2"],
+
+    "harness_id": "claude-agent-sdk",
+    "model": "anthropic/claude-sonnet-4-6",
+
+    "prompt": "System prompt injected into the agent. Markdown supported.",
+    "skill_name": "my-skill-name",
+    "skill": "Skill markdown — injected after the prompt via <!-- skill --> separator.",
+    "tools": ["gh CLI", "grep", "find"],
+    "requirements": null,
+
+    "env_vars": {
+      "MY_VAR": "pre-seeded value — shown in the env var editor on agent create"
+    }
+  },
+  {
     "id": "security-pr-scan",
     "name": "Security PR Scanner",
     "description": "Scans any PR for OWASP issues, secrets, and CVEs.",
