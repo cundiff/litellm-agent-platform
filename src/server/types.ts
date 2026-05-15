@@ -263,6 +263,14 @@ export interface ApiAgent {
   model: string;
   prompt: string | null;
   harness_id: string;
+  /**
+   * Derived from `harness_id` via `TUI_HARNESSES`. True for harnesses
+   * that expose a PTY over `/tty` (e.g. `claude-code`, `codex`), which
+   * the `lap` CLI / browser terminal can attach to. False for HTTP-only
+   * programmatic harnesses (`opencode`, `claude-agent-sdk`). The CLI
+   * wizard reads this to filter the agent picker.
+   */
+  supports_tui: boolean;
   repo_url: string | null;
   branch: string;
   pfp_url: string | null;
@@ -657,6 +665,7 @@ export function toApiAgent(row: AgentRow): ApiAgent {
     model: row.model,
     prompt: row.prompt ?? null,
     harness_id: row.harness_id,
+    supports_tui: harnessSupportsTui(row.harness_id),
     repo_url: row.repo_url ?? null,
     branch: row.branch,
     pfp_url: row.pfp_url ?? null,
@@ -761,6 +770,11 @@ export const TUI_HARNESSES: ReadonlySet<string> = new Set([
   HARNESS_CLAUDE_CODE,
   HARNESS_CODEX,
 ]);
+
+/** True when the harness exposes a PTY over `/tty` (see `TUI_HARNESSES`). */
+export function harnessSupportsTui(harness_id: string): boolean {
+  return TUI_HARNESSES.has(harness_id);
+}
 export const KNOWN_HARNESSES: ReadonlySet<string> = new Set([
   HARNESS_OPENCODE,
   HARNESS_CLAUDE_SDK,
