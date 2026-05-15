@@ -49,11 +49,23 @@ function renderBanner() {
   const cfg = loadConfig();
   const where = cfg?.base ?? "(not configured)";
   const { blueBold: b, bold, dim } = ansi;
-  // ANSI-shaded "LITELLM" block-letter wordmark + a smaller 2-row
+  // Bright-white pixel-art-style face glyphs over a blue body.
+  const w = s => `\x1b[1;97m${s}\x1b[0m`;
+  // Small chibi pixel-art train sprite (5 lines) above the wordmarks.
+  // Centered over the LITELLM block letters: the wordmark spans cols 3-58
+  // (center col 30), and the sprite is 7 cols wide → 26 leading spaces.
+  // Below: ANSI-shaded "LITELLM" block-letter wordmark + smaller 2-row
   // "AGENT PLATFORM" wordmark in the same bright blue. Full banner is
-  // ~9 lines — only shown on `lap` (wizard) and `lap login`, not on
+  // ~14 lines — only shown on `lap` (wizard) and `lap login`, not on
   // fast paths like `lap <name>`.
+  const sp = " ".repeat(26);
   const lines = [
+    "",
+    `${sp}${b("▄▀▀▀▀▀▄")}`,
+    `${sp}${b("█")} ${w("◕")} ${w("◕")} ${b("█")}`,
+    `${sp}${b("█")}  ${w("‿")}  ${b("█")}`,
+    `${sp}${b("▀█████▀")}`,
+    `${sp}${dim("▀▀   ▀▀")}`,
     "",
     `  ${b("██╗     ██╗████████╗███████╗██╗     ██╗     ███╗   ███╗")}`,
     `  ${b("██║     ██║╚══██╔══╝██╔════╝██║     ██║     ████╗ ████║")}`,
