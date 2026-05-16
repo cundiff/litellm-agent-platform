@@ -9,8 +9,6 @@ LiteLLM Agent Platform is self-hosted infrastructure for running coding agents â
 <img width="964" height="720" alt="lap_2" src="https://github.com/user-attachments/assets/a68b21fa-20b6-4ddc-a011-1bc9e6a3b296" />
 
 
-
-
 ## Get started
 
 > [!NOTE]
@@ -37,6 +35,13 @@ LiteLLM Agent Platform is self-hosted infrastructure for running coding agents â
     ```
 
 That spins up a fresh Kubernetes pod running Claude Code, attaches your local terminal to its TTY over a WebSocket, and drops you straight into the agent. The pod's env contains only stub credentials (e.g. `GITHUB_TOKEN=stub_github_a8f1`); the vault swaps them for real keys on every outbound TLS connection. Press **Ctrl-D** to detach; the session stays alive for 24h. See [docs/lap-cli.md](docs/lap-cli.md) for the full CLI.
+
+## Demo Video
+
+**â–¶ [Demo: setting up codex and claude-code sandboxes](https://www.loom.com/share/a88d525111b1445cb90db342ade09ebc)** &nbsp;Â·&nbsp; ~5 min
+
+End-to-end walkthrough: create an agent, open a sandbox from the `lap` CLI, attach a local terminal, run codex / claude-code inside.
+
 
 ## Self-hosting
 
