@@ -22,6 +22,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       make g++ ripgrep tmux \
     && rm -rf /var/lib/apt/lists/*
 
+# gh CLI: pinned release + checksum (matches the opencode / claude-agent-sdk
+# harness posture). Required so agents can run `gh pr create`, `gh issue view`,
+# etc. without bootstrapping the binary at runtime.
+ARG GH_VERSION=2.92.0
+ARG GH_SHA256=8f8212b1a9cec261a8839e0893168f50d3fc70f095da257feef4229234cefdf8
+RUN curl -fsSL -o /tmp/gh.deb \
+      "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.deb" \
+    && echo "${GH_SHA256}  /tmp/gh.deb" | sha256sum -c - \
+    && dpkg -i /tmp/gh.deb \
+    && rm /tmp/gh.deb
+
 # Install uv as a single static binary, pinned by version + SHA-256
 # checksum from astral's per-asset `.sha256` sidecar. Following AGENTS.md
 # CI Supply-Chain Safety: no `curl | sh` of an unpinned installer, and
@@ -86,10 +97,13 @@ RUN useradd -m -u 1001 -s /bin/bash sandbox \
 
 ENV PORT=4096
 ENV REPO_DIR=/work/repo
-# Pass `--tui` so the modern Ink-based interactive UI launches by default.
-# Plain `hermes` falls back to the legacy CLI which doesn't render properly
-# over a bare PTY. server.js splits POC_CMD on whitespace to support argv.
-ENV POC_CMD="hermes --tui"
+# `--tui` launches the modern Ink-based UI (plain `hermes` falls back to the
+# legacy CLI which doesn't render over a bare PTY). `--yolo` bypasses the
+# dangerous-command approval prompt so the agent can execute tool calls freely
+# inside its sandbox — same posture as the other LAP harnesses, which all run
+# inside vault-isolated containers where approval prompts add no real safety.
+# server.js splits POC_CMD on whitespace to support argv.
+ENV POC_CMD="hermes --tui --yolo"
 ENV TERM=xterm-256color
 ENV HERMES_HOME=/home/sandbox/.hermes
 
