@@ -66,6 +66,7 @@ export const POST = wrap<RouteContext>(async (req, ctx) => {
     tags: body.tags,
     type: body.type,
     priority: body.priority,
+    pinned: body.pinned,
     source: body.source ?? "ui",
     source_user_id: body.source_user_id ?? null,
     source_session_id: body.source_session_id ?? null,

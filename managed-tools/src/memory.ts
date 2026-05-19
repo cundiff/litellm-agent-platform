@@ -74,6 +74,12 @@ export const saveMemorySchema = {
     .max(5)
     .optional()
     .describe("Higher = surfaces first in pre-load and search. Default 0."),
+  pinned: z
+    .boolean()
+    .optional()
+    .describe(
+      "Always-on: when true, this memory is unconditionally included in the AGENT_PROMPT pre-load on every future session, independent of the priority/usage ranking. Use sparingly — reserve for rules the agent absolutely cannot afford to miss (security constraints, hard requirements the user emphasized with 'always' / 'never'). Defaults to false.",
+    ),
 } as const;
 
 export const searchMemorySchema = {
@@ -96,6 +102,7 @@ export type SaveMemoryInput = {
   tags?: string[];
   type?: "convention" | "constraint" | "reference" | "preference";
   priority?: number;
+  pinned?: boolean;
 };
 
 export type SearchMemoryInput = {
@@ -146,6 +153,7 @@ export async function callSaveMemory(
     tags: input.tags ?? [],
     type: input.type,
     priority: input.priority,
+    pinned: input.pinned,
     source: "agent",
     source_session_id: extra.source_session_id,
   });

@@ -335,7 +335,13 @@ async function buildContainerEnv(
   // awareness from turn 1. The search_memory tool inside the harness reads
   // the live DB on demand, so any memory saved after launch is still
   // reachable mid-run — this is just the cheap "always-in-context" layer.
-  const memories = await topMemoriesForAgent(agent.agent_id);
+  // Per-agent preload limit overrides the platform-wide default. Pinned rows
+  // (always-on) are layered on top of this number inside topMemoriesForAgent —
+  // here we just hand the agent's chosen ranked-window size through.
+  const memories = await topMemoriesForAgent(
+    agent.agent_id,
+    agent.preload_memory_limit,
+  );
   const memoryBlock = renderMemoryBlock(memories);
   const fullPrompt = [memoryBlock, agent.prompt ?? ""].filter(Boolean).join("\n\n");
 

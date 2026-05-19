@@ -31,6 +31,17 @@ import type { Memory } from "@prisma/client";
 /** Max memories pre-loaded into AGENT_PROMPT. Tune if prompts get too long. */
 export const PROMPT_PRELOAD_LIMIT = 10;
 
+/**
+ * Hard cap on rows marked `pinned: true` that get unconditionally included
+ * in the AGENT_PROMPT pre-load. Pinned rows bypass the priority/usage
+ * ranking — without a cap, a user marking 200 memories pinned would blow
+ * up the prompt. Picked at 2x PROMPT_PRELOAD_LIMIT so a user can comfortably
+ * always-on more rows than the ranked window holds, but the total ceiling
+ * (pinned + top-by-priority) stays bounded. Rows that lose the tie-break
+ * fall back to the regular ranked path.
+ */
+export const MAX_PINNED_PRELOAD = 20;
+
 /** Max rows returned from search_memory. Defensive cap. */
 export const SEARCH_LIMIT = 50;
 
@@ -40,6 +51,7 @@ export interface SaveMemoryInput {
   tags?: string[];
   type?: string;
   priority?: number;
+  pinned?: boolean;
   source?: "agent" | "slack" | "ui";
   source_user_id?: string | null;
   source_session_id?: string | null;
@@ -51,6 +63,7 @@ export interface UpdateMemoryInput {
   tags?: string[];
   type?: string;
   priority?: number;
+  pinned?: boolean;
   disabled?: boolean;
 }
 
@@ -88,23 +101,47 @@ export async function searchMemory(
 }
 
 /**
- * The pre-load query. Same ordering as search but no filtering — top N
- * by priority+usage. Called once at warm-task / cold-task launch and
- * stuffed into AGENT_PROMPT.
+ * The pre-load query. Returns the rows that get rendered into AGENT_PROMPT
+ * at warm-task / cold-task launch.
+ *
+ * Two-tier read so "always on" is a hard guarantee and not just a high
+ * priority value:
+ *
+ *   tier 1 — every `pinned: true` row, capped at MAX_PINNED_PRELOAD and
+ *            tie-broken by priority/usage. These are always included.
+ *   tier 2 — top non-pinned rows ordered by priority/usage, filling the
+ *            remaining slots up to `limit` total.
+ *
+ * Returned order: pinned rows first (priority desc), then ranked rows.
+ * Both tiers come from one DB hit — one findMany returns all rows we'd
+ * possibly need, partitioned in-memory. Simpler than two awaits, and the
+ * row count is bounded by limit + MAX_PINNED_PRELOAD.
  */
 export async function topMemoriesForAgent(
   agent_id: string,
   limit: number = PROMPT_PRELOAD_LIMIT,
 ): Promise<Memory[]> {
-  return prisma.memory.findMany({
+  const candidateLimit = limit + MAX_PINNED_PRELOAD;
+  // Pull the candidate set in one query — the orderBy puts pinned rows
+  // first so the slice below captures all the pinned ones we care about
+  // before the ranked tail. `pinned: "desc"` sorts true (1) before false (0)
+  // in Postgres.
+  const candidates = await prisma.memory.findMany({
     where: { agent_id, disabled: false },
     orderBy: [
+      { pinned: "desc" },
       { priority: "desc" },
       { times_applied: "desc" },
       { created_at: "desc" },
     ],
-    take: limit,
+    take: candidateLimit,
   });
+  const pinned = candidates.filter(m => m.pinned).slice(0, MAX_PINNED_PRELOAD);
+  const remainingSlots = Math.max(0, limit - pinned.length);
+  const ranked = candidates
+    .filter(m => !m.pinned)
+    .slice(0, remainingSlots);
+  return [...pinned, ...ranked];
 }
 
 export async function saveMemory(input: SaveMemoryInput): Promise<Memory> {
@@ -115,6 +152,7 @@ export async function saveMemory(input: SaveMemoryInput): Promise<Memory> {
       tags: input.tags ?? [],
       type: input.type ?? "convention",
       priority: input.priority ?? 0,
+      pinned: input.pinned ?? false,
       source: input.source ?? "agent",
       source_user_id: input.source_user_id ?? null,
       source_session_id: input.source_session_id ?? null,
@@ -136,6 +174,7 @@ export async function updateMemory(
       ...(input.tags !== undefined && { tags: input.tags }),
       ...(input.type !== undefined && { type: input.type }),
       ...(input.priority !== undefined && { priority: input.priority }),
+      ...(input.pinned !== undefined && { pinned: input.pinned }),
       ...(input.disabled !== undefined && { disabled: input.disabled }),
     },
   });
