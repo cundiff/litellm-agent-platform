@@ -35,6 +35,7 @@ import {
   DiagnoseResponse,
   HarnessMessage,
   HarnessMessagePart,
+  SendMessageAttachment,
   SessionRow,
   api,
   deleteSession,
@@ -85,6 +86,11 @@ interface LocalMessage {
   // `text` on assistant is reserved for the failed/error path.
   text?: string;
   parts?: HarnessMessagePart[];
+  // Image / file uploads attached to a user message. Populated locally
+  // when the composer captures a paste; populated on refresh from the
+  // harness thread when an `image` part is present on the user entry.
+  // Rendered as thumbnails alongside the prompt text in UserPromptBlock.
+  attachments?: SendMessageAttachment[];
   status: LocalStatus;
   error?: string;
   // Wall-clock ms from the user pressing send to the assistant reply
@@ -92,6 +98,18 @@ interface LocalMessage {
   // Set only on the most recent assistant message after a successful send.
   latency_ms?: number;
 }
+
+// Hard caps for composer attachments. Mirrors the server-side
+// `INITIAL_ATTACHMENT_MAX_BYTES` and `INITIAL_ATTACHMENTS_MAX_COUNT` so the
+// client surfaces friendly errors before we even POST.
+const COMPOSER_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
+const COMPOSER_ATTACHMENTS_MAX_COUNT = 10;
+const COMPOSER_ATTACHMENT_ALLOWED_MIME = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+]);
 
 // Map opencode's `[{info, parts}, ...]` thread into the local message
 // structure. User entries collapse to text-only; assistant entries carry
@@ -104,10 +122,17 @@ function mapHarnessMessages(msgs: HarnessMessage[]): LocalMessage[] {
         .filter((p) => p?.type === "text" && typeof p.text === "string")
         .map((p) => p.text as string)
         .join("");
+      // Carry pasted-image previews through refreshThread. The harness echoes
+      // the Anthropic-format `{type: "image", source: {type: "base64",
+      // media_type, data}}` part back on the user entry; pull each one into
+      // an attachment so UserPromptBlock can re-render the thumbnail after
+      // the canonical thread replaces the optimistic local message.
+      const attachments = extractAttachmentsFromParts(m.parts ?? []);
       return {
         id: m.info.id,
         role,
         text,
+        attachments: attachments.length > 0 ? attachments : undefined,
         status: "completed",
       };
     }
@@ -118,6 +143,22 @@ function mapHarnessMessages(msgs: HarnessMessage[]): LocalMessage[] {
       status: "completed",
     };
   });
+}
+
+function extractAttachmentsFromParts(
+  parts: HarnessMessagePart[],
+): SendMessageAttachment[] {
+  const out: SendMessageAttachment[] = [];
+  for (const p of parts) {
+    if (p?.type !== "image") continue;
+    const src = (p as { source?: { media_type?: string; data?: string } })
+      .source;
+    if (!src || typeof src.media_type !== "string" || typeof src.data !== "string") {
+      continue;
+    }
+    out.push({ mime_type: src.media_type, base64: src.data });
+  }
+  return out;
 }
 
 const POLL_INTERVAL_MS = 5000;
@@ -227,6 +268,12 @@ export default function SessionThreadView() {
   const [agent, setAgent] = useState<AgentRow | null>(null);
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [draft, setDraft] = useState<string>("");
+  // Pasted-image attachments staged for the next send. Cleared in handleSend
+  // at the same time as `draft` so a successful submit fully resets the
+  // composer; an error during stream-send leaves the user message (with its
+  // attachments) in the thread so the user can scroll back and see what they
+  // sent.
+  const [attachments, setAttachments] = useState<SendMessageAttachment[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [restarting, setRestarting] = useState<boolean>(false);
@@ -427,7 +474,10 @@ export default function SessionThreadView() {
   // the drain processes it FIFO.
   const handleSend = useCallback(() => {
     const content = draft.trim();
-    if (!content || !sessionId) return;
+    // A user can send a message with images only (no typed text), so the
+    // send gate checks attachments alongside the trimmed draft.
+    if (!content && attachments.length === 0) return;
+    if (!sessionId) return;
     if (session?.status !== "ready") {
       setError(
         `Session is not ready yet (status=${session?.status ?? "unknown"}).`,
@@ -439,13 +489,21 @@ export default function SessionThreadView() {
     const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const userId = `local-${stamp}`;
     const assistantId = `local-${stamp}-a`;
+    const stagedAttachments = attachments.length > 0 ? attachments : undefined;
     setMessages((prev) => [
       ...prev,
-      { id: userId, role: "user", text: content, status: "completed" },
+      {
+        id: userId,
+        role: "user",
+        text: content,
+        attachments: stagedAttachments,
+        status: "completed",
+      },
       { id: assistantId, role: "assistant", status: "queued" },
     ]);
     setDraft("");
-  }, [draft, sessionId, session]);
+    setAttachments([]);
+  }, [draft, attachments, sessionId, session]);
 
   // Queue drain: at most one in-flight stream per session. When the
   // in-flight turn resolves and there's a `queued` assistant row waiting,
@@ -471,8 +529,14 @@ export default function SessionThreadView() {
 
     const queuedAssistant = messages[idx];
     const userMsg = idx > 0 ? messages[idx - 1] : null;
-    if (!userMsg || userMsg.role !== "user" || !userMsg.text) return;
-    const userText = userMsg.text;
+    if (!userMsg || userMsg.role !== "user") return;
+    // A user message may be image-only (no typed text) when the composer
+    // sends just a pasted screenshot — guard against the empty-text path
+    // by also accepting messages that carry attachments. The harness
+    // accepts a parts array without a text block.
+    const userText = userMsg.text ?? "";
+    const userAttachments = userMsg.attachments;
+    if (!userText && (!userAttachments || userAttachments.length === 0)) return;
     const assistantId = queuedAssistant.id;
 
     drainingRef.current = true;
@@ -535,7 +599,12 @@ export default function SessionThreadView() {
         };
         await sendMessageStream(
           sessionId,
-          { text: userText },
+          {
+            text: userText,
+            ...(userAttachments && userAttachments.length > 0
+              ? { attachments: userAttachments }
+              : {}),
+          },
           (frame) => {
             if (frame.type !== "harness_event" || !frame.event) return;
             const ev = frame.event;
@@ -633,10 +702,13 @@ export default function SessionThreadView() {
         sdkStreamStatus={sdkStreamStatus}
         loading={loading}
         error={error}
+        setError={setError}
         hasInProgress={hasInProgress}
         currentModel={currentModel}
         draft={draft}
         setDraft={setDraft}
+        attachments={attachments}
+        setAttachments={setAttachments}
         handleSend={handleSend}
         handleKeyDown={handleKeyDown}
         messagesEndRef={messagesEndRef}
@@ -676,10 +748,13 @@ interface MainPanelProps {
   sdkStreamStatus: SdkStreamStatus;
   loading: boolean;
   error: string | null;
+  setError: (s: string | null) => void;
   hasInProgress: boolean;
   currentModel: string;
   draft: string;
   setDraft: (s: string) => void;
+  attachments: SendMessageAttachment[];
+  setAttachments: React.Dispatch<React.SetStateAction<SendMessageAttachment[]>>;
   handleSend: () => void;
   handleKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
@@ -702,10 +777,13 @@ function MainPanel({
   sdkStreamStatus,
   loading,
   error,
+  setError,
   hasInProgress,
   currentModel,
   draft,
   setDraft,
+  attachments,
+  setAttachments,
   handleSend,
   handleKeyDown,
   messagesEndRef,
@@ -1028,9 +1106,12 @@ function MainPanel({
           <Composer
             draft={draft}
             setDraft={setDraft}
+            attachments={attachments}
+            setAttachments={setAttachments}
             hasInProgress={hasInProgress}
             currentModel={currentModel}
             error={error}
+            setError={setError}
             disabled={!isReady}
             handleSend={handleSend}
             handleKeyDown={handleKeyDown}
@@ -1340,7 +1421,13 @@ function MessageBlock({
   isFirstUser: boolean;
 }) {
   if (msg.role === "user") {
-    return <UserPromptBlock content={msg.text ?? ""} emphasized={isFirstUser} />;
+    return (
+      <UserPromptBlock
+        content={msg.text ?? ""}
+        attachments={msg.attachments}
+        emphasized={isFirstUser}
+      />
+    );
   }
   return <AssistantBlock msg={msg} />;
 }
@@ -1353,20 +1440,56 @@ const MESSAGE_MAX_HEIGHT = "60vh";
 
 function UserPromptBlock({
   content,
+  attachments,
   emphasized,
 }: {
   content: string;
+  attachments?: SendMessageAttachment[];
   emphasized: boolean;
 }) {
   return (
     <div
-      className={`bg-muted/30 border border-border rounded-xl p-4 text-[14px] text-foreground leading-relaxed whitespace-pre-wrap overflow-y-auto ${
+      className={`bg-muted/30 border border-border rounded-xl p-4 text-[14px] text-foreground leading-relaxed overflow-y-auto ${
         emphasized ? "shadow-sm" : ""
       }`}
       style={{ maxHeight: MESSAGE_MAX_HEIGHT }}
     >
-      {content}
+      {attachments && attachments.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-3">
+          {attachments.map((a, i) => (
+            <AttachmentImage key={i} attachment={a} />
+          ))}
+        </div>
+      )}
+      {content && <div className="whitespace-pre-wrap">{content}</div>}
     </div>
+  );
+}
+
+// Read-only render of an attached image inside a posted user message.
+// Click opens the full-resolution data URL in a new tab so the user can
+// inspect at native resolution without the thumbnail size cap.
+function AttachmentImage({
+  attachment,
+}: {
+  attachment: SendMessageAttachment;
+}) {
+  const src = `data:${attachment.mime_type};base64,${attachment.base64}`;
+  return (
+    <a
+      href={src}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="block rounded-md border border-border overflow-hidden hover:opacity-90 transition-opacity"
+      title={attachment.name ?? "attached image"}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt={attachment.name ?? "attached image"}
+        className="max-h-64 max-w-xs object-contain"
+      />
+    </a>
   );
 }
 
@@ -1381,7 +1504,13 @@ function AssistantBlock({ msg }: { msg: LocalMessage }) {
   // still render correctly.
   const visibleParts = parts.filter((p) => {
     const t = typeof p?.type === "string" ? p.type : "";
-    return t === "text" || t === "reasoning" || t === "thinking" || t === "tool";
+    return (
+      t === "text" ||
+      t === "reasoning" ||
+      t === "thinking" ||
+      t === "tool" ||
+      t === "image"
+    );
   });
 
   return (
@@ -1465,6 +1594,18 @@ function PartBlock({ part }: { part: HarnessMessagePart }) {
   }
   if (t === "tool") {
     return <ToolBlock part={part} />;
+  }
+  if (t === "image") {
+    // Anthropic content-block shape: `{type: "image", source: {type:
+    // "base64", media_type, data}}`. We accept either that or a flat
+    // `{mime_type, base64}` for forward-compat with other harnesses.
+    const src = (part as { source?: { media_type?: string; data?: string } })
+      .source;
+    const mime =
+      src?.media_type ?? (part as { mime_type?: string }).mime_type ?? "";
+    const data = src?.data ?? (part as { base64?: string }).base64 ?? "";
+    if (!mime || !data) return null;
+    return <AttachmentImage attachment={{ mime_type: mime, base64: data }} />;
   }
   return null;
 }
@@ -1600,41 +1741,157 @@ function ToolKv({ label, value }: { label: string; value: unknown }) {
 interface ComposerProps {
   draft: string;
   setDraft: (s: string) => void;
+  attachments: SendMessageAttachment[];
+  setAttachments: React.Dispatch<React.SetStateAction<SendMessageAttachment[]>>;
   hasInProgress: boolean;
   currentModel: string;
   error: string | null;
+  setError: (s: string | null) => void;
   disabled: boolean;
   handleSend: () => void;
   handleKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 }
 
+// Convert a clipboard / file blob into the SendMessageAttachment wire shape:
+// strip the `data:<mime>;base64,` prefix so the server stores raw base64
+// (matches the `MessageAttachment.base64` contract — server logic concatenates
+// the prefix on its side). Resolves null on read failure so the caller can
+// drop the file without raising.
+async function blobToAttachment(
+  blob: Blob,
+  fallbackName: string,
+): Promise<SendMessageAttachment | null> {
+  try {
+    const dataUrl: string = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ""));
+      reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+      reader.readAsDataURL(blob);
+    });
+    const commaIdx = dataUrl.indexOf(",");
+    if (commaIdx < 0) return null;
+    const base64 = dataUrl.slice(commaIdx + 1);
+    if (!base64) return null;
+    return {
+      name: (blob as File).name || fallbackName,
+      mime_type: blob.type,
+      base64,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function Composer({
   draft,
   setDraft,
+  attachments,
+  setAttachments,
   hasInProgress,
   currentModel,
   error,
+  setError,
   disabled,
   handleSend,
   handleKeyDown,
 }: ComposerProps) {
   // Submitting while a previous message is in flight is supported — the new
   // message lands in the FIFO queue and the drain effect picks it up. So the
-  // textarea stays enabled and the send button is gated only on a non-empty
-  // draft + a ready sandbox.
-  const canSend = draft.trim().length > 0 && !disabled;
+  // textarea stays enabled and the send button is gated on a non-empty draft
+  // OR at least one staged attachment + a ready sandbox.
+  const canSend =
+    (draft.trim().length > 0 || attachments.length > 0) && !disabled;
   const placeholder = disabled
     ? "Sandbox not ready yet…"
     : hasInProgress
       ? "Queue a follow up"
       : "Add a follow up";
 
+  // Stage a clipboard / drop / file-picker file onto the attachments list.
+  // Validates count + MIME + size client-side so the user gets immediate
+  // feedback before we POST — server enforces the same caps as a defence
+  // against a malicious client.
+  const stageFile = useCallback(
+    async (file: File): Promise<string | null> => {
+      if (!COMPOSER_ATTACHMENT_ALLOWED_MIME.has(file.type)) {
+        return `unsupported file type: ${file.type || "unknown"} (png, jpeg, gif, webp only)`;
+      }
+      if (file.size > COMPOSER_ATTACHMENT_MAX_BYTES) {
+        return `file too large: ${(file.size / 1024 / 1024).toFixed(1)} MB (max 5 MB)`;
+      }
+      const att = await blobToAttachment(file, "pasted-image");
+      if (!att) return "failed to read file";
+      setAttachments((prev) => {
+        if (prev.length >= COMPOSER_ATTACHMENTS_MAX_COUNT) return prev;
+        return [...prev, att];
+      });
+      return null;
+    },
+    [setAttachments],
+  );
+
+  const handlePaste = useCallback(
+    async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const items = e.clipboardData?.items;
+      if (!items || items.length === 0) return;
+      // Collect image files first; if none, let the browser handle the paste
+      // normally (text falls through to the textarea).
+      const images: File[] = [];
+      for (const it of items) {
+        if (it.kind === "file" && it.type.startsWith("image/")) {
+          const f = it.getAsFile();
+          if (f) images.push(f);
+        }
+      }
+      if (images.length === 0) return;
+      e.preventDefault();
+      if (
+        attachments.length + images.length >
+        COMPOSER_ATTACHMENTS_MAX_COUNT
+      ) {
+        setError(
+          `too many attachments (max ${COMPOSER_ATTACHMENTS_MAX_COUNT})`,
+        );
+        return;
+      }
+      // Stage sequentially so error messages match the file that failed
+      // and we don't fire N FileReader instances against the same DOM event.
+      for (const f of images) {
+        const err = await stageFile(f);
+        if (err) {
+          setError(err);
+          return;
+        }
+      }
+    },
+    [attachments.length, stageFile, setError],
+  );
+
+  const handleRemoveAttachment = useCallback(
+    (idx: number) => {
+      setAttachments((prev) => prev.filter((_, i) => i !== idx));
+    },
+    [setAttachments],
+  );
+
   return (
     <div className="border border-border rounded-xl shadow-sm bg-background overflow-hidden focus-within:ring-1 focus-within:ring-ring focus-within:border-ring transition-all">
+      {attachments.length > 0 && (
+        <div className="flex flex-wrap gap-2 px-3 pt-3">
+          {attachments.map((a, i) => (
+            <AttachmentChip
+              key={`${a.name ?? ""}-${i}`}
+              attachment={a}
+              onRemove={() => handleRemoveAttachment(i)}
+            />
+          ))}
+        </div>
+      )}
       <textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={handleKeyDown}
+        onPaste={handlePaste}
         placeholder={placeholder}
         disabled={disabled}
         rows={1}
@@ -1645,7 +1902,7 @@ function Composer({
           {error ? (
             <span className="text-red-600">{error}</span>
           ) : (
-            currentModel || "Enter to send · Shift+Enter for newline"
+            currentModel || "Enter to send · Shift+Enter for newline · paste images"
           )}
         </span>
         <div className="flex items-center gap-3">
@@ -1665,6 +1922,37 @@ function Composer({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Inline thumbnail chip for a staged attachment. The base64 + mime are
+// reconstituted into a data URL only for preview rendering — the wire payload
+// uses the prefix-free `base64` field on SendMessageAttachment.
+function AttachmentChip({
+  attachment,
+  onRemove,
+}: {
+  attachment: SendMessageAttachment;
+  onRemove: () => void;
+}) {
+  const src = `data:${attachment.mime_type};base64,${attachment.base64}`;
+  return (
+    <div className="relative group rounded-md border border-border bg-muted/30 p-1">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt={attachment.name ?? "attached image"}
+        className="h-16 w-16 object-cover rounded"
+      />
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label="Remove attachment"
+        className="absolute -top-1.5 -right-1.5 size-5 rounded-full bg-foreground text-background text-[11px] leading-none flex items-center justify-center shadow opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+      >
+        ×
+      </button>
     </div>
   );
 }

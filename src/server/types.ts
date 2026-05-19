@@ -319,8 +319,20 @@ export type CreateSessionBody = z.infer<typeof CreateSessionBody>;
 export const SendMessageBody = z.object({
   text: z.string().optional(),
   parts: z.array(z.record(z.string(), z.unknown())).optional(),
+  /**
+   * Inline binary content (images today) attached to `text`. Same shape and
+   * caps as `CreateSessionBody.initial_attachments` — see that field for the
+   * rationale. The route lifts each entry into a Claude-format multimodal
+   * `image` part alongside the text, mirroring `runInitialPrompt`. Mutually
+   * exclusive with `parts` (caller picks one path).
+   */
+  attachments: z
+    .array(InitialAttachment)
+    .max(INITIAL_ATTACHMENTS_MAX_COUNT)
+    .optional(),
 });
 export type SendMessageBody = z.infer<typeof SendMessageBody>;
+export type MessageAttachment = z.infer<typeof InitialAttachment>;
 
 // Memory bodies — see src/server/memory.ts for the model.
 // `source` is set by the handler (slack/ui/agent depending on the entry

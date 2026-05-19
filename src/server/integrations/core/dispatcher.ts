@@ -323,18 +323,13 @@ async function sendFollowupToSession(args: {
   session_id: string;
   body: string;
   /**
-   * Image / file uploads on the followup message. Dropped today: the
-   * v1 `/sessions/{id}/message` endpoint is text-only. Tracked as a
-   * follow-up — initial images on a new thread already cover the primary
-   * Slack use case; in-thread image followups land in a v2 PR.
+   * Image / file uploads on the followup message. Forwarded as
+   * `attachments` on the v1 `/sessions/{id}/message` body — the route
+   * lifts them into Claude-format multimodal parts via `expandMessage`,
+   * same shape as `runInitialPrompt`.
    */
   attachments?: IntegrationAttachment[];
 }): Promise<void> {
-  if (args.attachments && args.attachments.length > 0) {
-    console.warn(
-      `[integrations/dispatcher] dropping ${args.attachments.length} attachment(s) on followup — not yet supported on the message endpoint`,
-    );
-  }
   const baseUrl = process.env.BASE_URL ?? "http://localhost:3000";
   const url = `${baseUrl}/api/v1/managed_agents/sessions/${encodeURIComponent(
     args.session_id,
@@ -346,7 +341,12 @@ async function sendFollowupToSession(args: {
         "content-type": "application/json",
         authorization: `Bearer ${env.MASTER_KEY}`,
       },
-      body: JSON.stringify({ text: args.body }),
+      body: JSON.stringify({
+        text: args.body,
+        ...(args.attachments && args.attachments.length > 0
+          ? { attachments: args.attachments }
+          : {}),
+      }),
     });
     if (!res.ok) {
       throw new Error(`followup failed: ${res.status} ${await res.text()}`);

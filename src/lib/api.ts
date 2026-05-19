@@ -837,9 +837,23 @@ export async function getSessionInterceptions(
 
 // ---------- Session messages (passthrough to harness) ----------
 
+/**
+ * Inline binary content attached to a follow-up message. Matches the server's
+ * `MessageAttachment` shape — see `src/server/types.ts`. Images today; the
+ * route lifts each entry into a Claude-format multimodal `image` part.
+ */
+export interface SendMessageAttachment {
+  name?: string;
+  /** MIME type, e.g. "image/png". Required so the harness can route to vision. */
+  mime_type: string;
+  /** Raw file bytes, base64-encoded (no `data:` prefix). */
+  base64: string;
+}
+
 export interface SendMessageRequest {
   text?: string;
   parts?: HarnessMessagePart[];
+  attachments?: SendMessageAttachment[];
 }
 
 export function sendMessage(
