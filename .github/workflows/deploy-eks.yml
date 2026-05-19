@@ -143,6 +143,18 @@ jobs:
       - name: Build Docker image
         run: docker build --no-cache --build-arg GIT_SHA="${{ github.sha }}" -t "$IMAGE" .
 
+      - name: Verify server-proxy.mjs in image
+        run: |
+          actual=$(docker run --rm "$IMAGE" node -e "console.log(require('fs').readFileSync('/app/server-proxy.mjs','utf8').split('\n')[21])")
+          expected=$(sed -n '22p' server-proxy.mjs)
+          echo "expected line 22: $expected"
+          echo "actual   line 22: $actual"
+          if [ "$actual" != "$expected" ]; then
+            echo "ERROR: server-proxy.mjs in image does not match source — aborting"
+            exit 1
+          fi
+          echo "OK: server-proxy.mjs verified"
+
       - name: Push image (SHA tag)
         run: docker push "$IMAGE"
 
