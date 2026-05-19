@@ -257,12 +257,16 @@ export default function SessionThreadView() {
     return "";
   }, [session, agent]);
 
-  // Disabled — the passive EventSource was double-rendering with the
-  // /message_stream-driven assistant message. /message_stream is the single
-  // source of truth for live updates now.
-  const sdkStreamEnabled = false;
+  // Subscribe to the session-wide SSE while the harness is up. The hook
+  // accumulates SDKMessage[] in local state but `SdkStreamPanel` is not
+  // rendered today — we use the array length only as a "new harness event"
+  // signal to drive `refreshThread()` below. This is what makes
+  // externally-triggered turns (Slack webhook → /message → harness bus)
+  // paint on the open tab without waiting for the 5s poll cycle.
+  const sdkStreamEnabled = !!sessionId && session?.status === "ready";
   const { messages: sdkMessages, status: sdkStreamStatus } =
     useSdkMessageStream(sessionId, sdkStreamEnabled);
+  const lastSdkLenRef = useRef(0);
 
   // Pull the full opencode thread and replace local state. Source of truth
   // lives in the harness — POST /message only returns the final assistant
@@ -301,6 +305,18 @@ export default function SessionThreadView() {
       console.warn("listSessionMessages failed", e);
     }
   }, [sessionId]);
+
+  // Bridge: when the persistent SSE sees new harness frames, pull canonical
+  // messages so the existing renderer picks them up. We skip while a local
+  // UI-initiated stream is draining — that path writes token deltas straight
+  // into `messages`, and a mid-stream refresh would clobber them with the
+  // older harness-side snapshot.
+  useEffect(() => {
+    if (sdkMessages.length === lastSdkLenRef.current) return;
+    lastSdkLenRef.current = sdkMessages.length;
+    if (drainingRef.current) return;
+    void refreshThread();
+  }, [sdkMessages.length, refreshThread]);
 
   const loadSession = useCallback(async () => {
     if (!sessionId) return;
