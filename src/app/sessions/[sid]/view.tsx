@@ -27,6 +27,8 @@ import {
   Activity,
   ShieldCheck,
   Trash2,
+  MessageSquare,
+  ExternalLink,
 } from "lucide-react";
 import {
   ApiError,
@@ -35,6 +37,7 @@ import {
   DiagnoseResponse,
   HarnessMessage,
   HarnessMessagePart,
+  SessionOrigin,
   SessionRow,
   api,
   deleteSession,
@@ -941,6 +944,7 @@ function MainPanel({
       {/* Scrollable thread */}
       <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-[720px] mx-auto w-full py-10 px-6 flex flex-col gap-6">
+          {session?.origin && <OriginBanner origin={session.origin} />}
           {loading && messages.length === 0 && (
             <div className="text-[13px] text-muted-foreground">Loading…</div>
           )}
@@ -1366,6 +1370,57 @@ function MessageBlock({
 // every other message off-screen. The block itself scrolls internally; the
 // page keeps scrolling past it.
 const MESSAGE_MAX_HEIGHT = "60vh";
+
+// Compact banner above the first message when a session was created from an
+// integration webhook. Surfaces "this conversation started elsewhere — here's
+// the link back" so the operator on the LAP side has a one-click path to the
+// originating Slack thread / Linear issue / etc. Renders nothing when the
+// integration didn't provide a deep link (we omit the banner rather than show
+// a dangling label).
+function OriginBanner({ origin }: { origin: SessionOrigin }) {
+  const label = originLabel(origin);
+  // No URL → nothing actionable to show. The user already sees the session
+  // exists; a label-only banner adds noise without affordance.
+  if (!origin.url) return null;
+  return (
+    <a
+      href={origin.url}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="flex items-center gap-2 self-start text-[12px] text-muted-foreground hover:text-foreground bg-muted/40 hover:bg-muted border border-border rounded-full px-3 py-1.5 transition-colors"
+      title={`Open in ${prettyIntegrationName(origin.integration_id)}`}
+    >
+      <MessageSquare className="w-3.5 h-3.5 shrink-0" aria-hidden />
+      <span className="truncate max-w-[420px]">{label}</span>
+      <ExternalLink className="w-3 h-3 shrink-0 opacity-70" aria-hidden />
+    </a>
+  );
+}
+
+function prettyIntegrationName(id: string): string {
+  switch (id) {
+    case "slack":
+      return "Slack";
+    case "linear":
+      return "Linear";
+    default:
+      return id;
+  }
+}
+
+/**
+ * Label rendered in the banner. Prefers an explicit `external_ref` when the
+ * integration filled one in (Linear's "LIT-1234", a Slack channel name once
+ * we wire that up), and otherwise falls back to a generic "thread in <medium>"
+ * phrase. Never falls through to the raw `external_session_id` — those are
+ * opaque ("slack:T012:C034:1779..."), not useful to humans.
+ */
+function originLabel(origin: SessionOrigin): string {
+  const medium = prettyIntegrationName(origin.integration_id);
+  if (origin.external_ref) return `${medium} thread · ${origin.external_ref}`;
+  if (origin.integration_id === "slack") return "Slack thread";
+  return `${medium} thread`;
+}
 
 function UserPromptBlock({
   content,
