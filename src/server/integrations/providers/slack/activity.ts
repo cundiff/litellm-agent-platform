@@ -22,6 +22,7 @@
 
 import { fetch } from "undici";
 import { getAccessToken } from "../../core/oauth";
+import { mrkdwnFromMarkdown } from "./mrkdwn";
 import type {
   Integration,
   SessionEvent,
@@ -76,19 +77,16 @@ function bodyFor(event: SessionEvent): string | null {
   switch (event.type) {
     case "thought":
       // Render as italicized note so it visually separates from real replies.
-      // Any externalUrls (e.g. the LAP agent page on the "setting up…" ack)
-      // are appended after the italic block as plain links — Slack renders
-      // `<url|label>` correctly even outside the italics.
-      return `_${event.body}_${formatLinks(event.externalUrls)}`;
+      // The body itself is short / single-line in practice, so we skip the
+      // markdown conversion — wrapping converted bold/italic inside another
+      // `_..._` would produce confusing nested formatting.
+      return `_${event.body}_`;
     case "response":
-      // `response.externalUrls` is reserved for a follow-up that posts the
-      // PR / artifact link alongside the agent's final reply. Not wired up
-      // here yet — keep response rendering unchanged.
-      return event.body;
+      return mrkdwnFromMarkdown(event.body);
     case "elicit":
-      return event.body;
+      return mrkdwnFromMarkdown(event.body);
     case "error":
-      return `:warning: ${event.body}`;
+      return `:warning: ${mrkdwnFromMarkdown(event.body)}`;
     case "action":
       // Hide raw tool calls in v1 — they create huge walls of text in Slack.
       // Surface them later behind a "verbose" channel-level setting.
