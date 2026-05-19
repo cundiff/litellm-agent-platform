@@ -19,6 +19,10 @@ RUN find /root/.opencode -maxdepth 2 -type d -name 'cache' -exec rm -rf {} + 2>/
  && find /root/.opencode -maxdepth 2 -name '*.tar*' -delete 2>/dev/null || true
 
 # ------------------------------------------------------------------ runtime
+# Note: the prior standalone opencode Dockerfile created `sandbox` at UID 1000;
+# all other harnesses already used UID 1001 and `harnesses/base` consolidates
+# on 1001. Sandbox volumes are ephemeral (fresh per session via
+# data-plane/agent-sandbox), so no host-side data on disk carries the old UID.
 FROM harnesses/base:dev
 
 COPY --from=installer --chown=sandbox:sandbox /root/.opencode /home/sandbox/.opencode
