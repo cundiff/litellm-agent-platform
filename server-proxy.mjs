@@ -163,6 +163,7 @@ function forwardToNext(clientSocket, initialBuf) {
 
 async function handleTtyUpgrade(clientSocket, buf, sessionId, token) {
   if (!tokenOk(token)) {
+    console.warn(`[tty-proxy] 401 session=${sessionId} presented=${token.slice(0,8)}… HARNESS_TOKEN_SET=${!!HARNESS_TOKEN} CONTAINER_TOKEN_SET=${!!CONTAINER_HARNESS_TOKEN}`);
     try {
       clientSocket.write(
         "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
