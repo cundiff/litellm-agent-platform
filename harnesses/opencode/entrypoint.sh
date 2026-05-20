@@ -38,14 +38,7 @@ cat > opencode.json <<EOF
       }
     }
   },
-  "model": "litellm/${LITELLM_DEFAULT_MODEL}",
-  "permission": {
-    "edit": "allow",
-    "bash": "allow",
-    "webfetch": "allow",
-    "doom_loop": "allow",
-    "external_directory": "allow"
-  }
+  "model": "litellm/${LITELLM_DEFAULT_MODEL}"
 }
 EOF
 
