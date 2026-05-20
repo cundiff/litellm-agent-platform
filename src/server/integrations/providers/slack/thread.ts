@@ -63,10 +63,16 @@ function renderTranscript(messages: SlackReplyMessage[]): string | null {
   if (lines.join("\n").length <= MAX_TRANSCRIPT_CHARS) {
     return lines.join("\n");
   }
+  // Over budget: drop oldest lines first, then hard-truncate in case a single
+  // remaining message still exceeds the cap on its own.
   while (lines.length > 1 && lines.join("\n").length > MAX_TRANSCRIPT_CHARS) {
     lines.shift();
   }
-  return "… earlier messages omitted …\n" + lines.join("\n");
+  let body = lines.join("\n");
+  if (body.length > MAX_TRANSCRIPT_CHARS) {
+    body = body.slice(0, MAX_TRANSCRIPT_CHARS) + "…";
+  }
+  return "… earlier messages omitted …\n" + body;
 }
 
 export async function fetchThreadHistory(
@@ -75,13 +81,15 @@ export async function fetchThreadHistory(
   install: IntegrationInstall,
   excludeTs?: string,
 ): Promise<string | null> {
-  const token = decrypt(install.access_token);
   const url = new URL(REPLIES_URL);
   url.searchParams.set("channel", channel);
   url.searchParams.set("ts", thread_ts);
   url.searchParams.set("limit", String(MAX_REPLIES));
 
   try {
+    // decrypt can throw on a malformed/un-decryptable token — keep it inside
+    // the try so the best-effort contract holds and parse() never 5xxes Slack.
+    const token = decrypt(install.access_token);
     const res = await fetch(url.toString(), {
       headers: { authorization: `Bearer ${token}` },
     });
