@@ -236,8 +236,12 @@ function buildSessionUrl(session_id: string): string | null {
 
 /**
  * Build the `externalUrls` entry for a "View session" button on outbound
- * `response` events. Returns undefined when the public URL can't be
- * resolved so the SessionEvent stays well-formed (the field is optional).
+ * SessionEvents (thought acks, responses, etc.). Returns undefined when
+ * the public URL can't be resolved so the SessionEvent stays well-formed
+ * (the field is optional). This is the single source of truth for the
+ * button label — every integration message that links back to the LAP
+ * session page should go through here so users see one consistent label
+ * across acks and responses.
  */
 function viewSessionUrls(
   session_id: string,
