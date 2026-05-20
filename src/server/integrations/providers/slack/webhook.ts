@@ -36,6 +36,7 @@ import type {
   WebhookAdapter,
 } from "../../core/types";
 import { fetchAttachments, type SlackFile } from "./files";
+import { fetchThreadHistory } from "./thread";
 
 const SIG_HEADER = "x-slack-signature";
 const TS_HEADER = "x-slack-request-timestamp";
@@ -176,6 +177,17 @@ export function buildWebhookAdapter(): WebhookAdapter {
         e.ts,
       );
 
+      // When the mention lands inside an existing thread, Slack only sends us
+      // the mention itself — backfill the earlier messages so the agent sees
+      // the context a human reading the thread would. A top-level mention
+      // starts a fresh thread (thread_ts === ts) and has nothing prior.
+      let threadContext: string | undefined;
+      if (e.thread_ts && e.thread_ts !== e.ts) {
+        threadContext =
+          (await fetchThreadHistory(channel, e.thread_ts, install, e.ts)) ??
+          undefined;
+      }
+
       return {
         kind: "message",
         external_session_id: externalSessionId,
@@ -185,6 +197,7 @@ export function buildWebhookAdapter(): WebhookAdapter {
         // immediate `:eyes:` reaction on the user's actual message rather
         // than the thread root.
         original_ts: e.ts,
+        thread_context: threadContext,
       };
     },
   };
