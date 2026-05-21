@@ -19,7 +19,9 @@ export function buildSandboxMcpServer(
   session_id: string,
 ): McpSdkServerConfigWithInstance | null {
   const base = process.env.LAP_BASE_URL;
-  const token = process.env.LAP_AUTH_TOKEN;
+  // Inline harness deployment has MASTER_KEY (via vault) but no per-session
+  // LAP_AUTH_TOKEN — fall back so provision/execute work in both contexts.
+  const token = process.env.LAP_AUTH_TOKEN ?? process.env.MASTER_KEY;
   if (!base || !token) return null;
 
   const provision = tool(
