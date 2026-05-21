@@ -475,7 +475,7 @@ export default function AgentDetailPage({ params }: PageProps) {
               <dt className="text-muted-foreground">Branch</dt>
               <dd className="font-mono text-[13px]">{agent.branch}</dd>
 
-              {agent.repo_url ? (
+              {agent.repo_url && /^https?:\/\//i.test(agent.repo_url) ? (
                 <>
                   <dt className="text-muted-foreground">Repo</dt>
                   <dd className="min-w-0 font-mono text-[13px] break-all">
