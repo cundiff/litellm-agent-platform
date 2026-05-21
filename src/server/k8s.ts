@@ -105,6 +105,7 @@ const DEFAULT_HTTP_READY_TIMEOUT_MS = 600_000;
 
 let _core: k8s.CoreV1Api | null = null;
 let _custom: k8s.CustomObjectsApi | null = null;
+let _apps: k8s.AppsV1Api | null = null;
 
 function loadKubeConfig(): k8s.KubeConfig {
   const kc = new k8s.KubeConfig();
@@ -180,6 +181,11 @@ function customApi(): k8s.CustomObjectsApi {
   if (_custom === null)
     _custom = loadKubeConfig().makeApiClient(k8s.CustomObjectsApi);
   return _custom;
+}
+
+function appsV1Api(): k8s.AppsV1Api {
+  if (_apps === null) _apps = loadKubeConfig().makeApiClient(k8s.AppsV1Api);
+  return _apps;
 }
 
 // ---------------------------------------------------------------------------
@@ -1285,4 +1291,159 @@ export async function fetchVaultInterceptions(
   // Pass through as-is. We don't re-validate per record — the route handler
   // streams it straight to the client which has its own typing.
   return body as VaultInterception[];
+}
+
+// ---------------------------------------------------------------------------
+// Inline harness Deployment — shared claude-agent-sdk server for brain-inline
+// sessions. Unlike session sandboxes (Sandbox CRs), this is a long-running
+// ClusterIP Deployment accessed via stable cluster-internal DNS.
+// ---------------------------------------------------------------------------
+
+const INLINE_HARNESS_NAME = "brain-inline-harness";
+
+export function inlineHarnessUrl(): string {
+  return `http://${INLINE_HARNESS_NAME}.${env.K8S_NAMESPACE}.svc.cluster.local:${env.CONTAINER_PORT}`;
+}
+
+export async function getInlineHarnessStatus(): Promise<{
+  exists: boolean;
+  readyReplicas: number;
+  url: string;
+}> {
+  const url = inlineHarnessUrl();
+  try {
+    const dep = await appsV1Api().readNamespacedDeployment({
+      name: INLINE_HARNESS_NAME,
+      namespace: env.K8S_NAMESPACE,
+    });
+    return {
+      exists: true,
+      readyReplicas: dep.status?.readyReplicas ?? 0,
+      url,
+    };
+  } catch {
+    // 404 = not deployed; any other error (e.g. k8s unreachable in local dev)
+    // also reports stopped so the UI card still renders.
+    return { exists: false, readyReplicas: 0, url };
+  }
+}
+
+export async function createInlineHarnessDeployment(image: string): Promise<void> {
+  const ns = env.K8S_NAMESPACE;
+  const port = env.CONTAINER_PORT;
+  const labels = { app: INLINE_HARNESS_NAME };
+
+  // Matches the session-sandbox security model: LITELLM_API_KEY is never in
+  // the harness container env. Vault sidecar holds REAL_LITELLM_API_KEY and
+  // swaps it at egress via HTTPS_PROXY. Harness only ever sees the stub.
+  const harnessEnv: Array<{ name: string; value: string }> = [
+    { name: "PORT", value: String(port) },
+    { name: "SANDBOX_TOOLS", value: "true" },
+    { name: "LITELLM_API_BASE", value: env.LITELLM_API_BASE },
+    { name: "LAP_BASE_URL", value: env.LAP_BASE_URL },
+    { name: "PLATFORM_INTERNAL_URL", value: env.PLATFORM_INTERNAL_URL },
+    // Route all HTTPS through the in-pod vault sidecar (same as session sandboxes).
+    { name: "HTTPS_PROXY", value: "http://127.0.0.1:14322" },
+    { name: "HTTP_PROXY",  value: "http://127.0.0.1:14322" },
+    { name: "NO_PROXY", value: "localhost,127.0.0.1,.svc.cluster.local,.svc,.cluster.local" },
+    { name: "NODE_EXTRA_CA_CERTS", value: "/etc/vault-ca/tls.crt" },
+    { name: "SSL_CERT_FILE",        value: "/etc/vault-ca/tls.crt" },
+    { name: "REQUESTS_CA_BUNDLE",   value: "/etc/vault-ca/tls.crt" },
+    { name: "CURL_CA_BUNDLE",       value: "/etc/vault-ca/tls.crt" },
+    { name: "GIT_SSL_CAINFO",       value: "/etc/vault-ca/tls.crt" },
+    { name: "VAULT_ENABLED", value: "true" },
+  ];
+
+  // Vault sidecar: holds the real secrets and writes stubs to /lap-shared/env.
+  // No per-session LAP tokens needed — this is a shared platform service.
+  const vaultEnv: Array<{ name: string; value: string }> = [
+    { name: "MASTER_KEY",           value: env.MASTER_KEY },
+    { name: "REAL_LITELLM_API_KEY", value: env.LITELLM_API_KEY },
+  ];
+
+  const deployment: k8s.V1Deployment = {
+    apiVersion: "apps/v1",
+    kind: "Deployment",
+    metadata: { name: INLINE_HARNESS_NAME, namespace: ns, labels },
+    spec: {
+      replicas: 1,
+      selector: { matchLabels: labels },
+      template: {
+        metadata: { labels },
+        spec: {
+          containers: [
+            {
+              name: "harness",
+              image,
+              imagePullPolicy: env.K8S_IMAGE_PULL_POLICY,
+              ports: [{ containerPort: port, protocol: "TCP" }],
+              env: harnessEnv,
+              volumeMounts: [
+                { name: "lap-shared", mountPath: "/lap-shared", readOnly: true },
+                { name: "vault-ca",   mountPath: "/etc/vault-ca", readOnly: true },
+              ],
+              resources: {
+                requests: { cpu: "100m", memory: "256Mi" },
+                limits: { cpu: "500m", memory: "512Mi" },
+              },
+            },
+            {
+              name: "vault",
+              image: env.K8S_VAULT_IMAGE,
+              imagePullPolicy: env.K8S_IMAGE_PULL_POLICY,
+              env: vaultEnv,
+              volumeMounts: [
+                { name: "lap-shared", mountPath: "/lap-shared" },
+                { name: "vault-ca",   mountPath: "/etc/vault-ca", readOnly: true },
+              ],
+              resources: {
+                requests: { cpu: "20m",  memory: "80Mi"  },
+                limits:   { cpu: "200m", memory: "256Mi" },
+              },
+            },
+          ],
+          volumes: [
+            { name: "lap-shared", emptyDir: { medium: "Memory" } },
+            { name: "vault-ca",   secret: { secretName: "vault-ca" } },
+          ],
+        },
+      },
+    },
+  };
+
+  try {
+    await appsV1Api().createNamespacedDeployment({ namespace: ns, body: deployment });
+  } catch (err) {
+    if (!isAlreadyExists(err)) throw err;
+  }
+
+  const service: k8s.V1Service = {
+    apiVersion: "v1",
+    kind: "Service",
+    metadata: { name: INLINE_HARNESS_NAME, namespace: ns, labels },
+    spec: {
+      type: "ClusterIP",
+      selector: labels,
+      ports: [{ port, targetPort: port, protocol: "TCP" }],
+    },
+  };
+
+  try {
+    await coreApi().createNamespacedService({ namespace: ns, body: service });
+  } catch (err) {
+    if (!isAlreadyExists(err)) throw err;
+  }
+}
+
+export async function deleteInlineHarnessDeployment(): Promise<void> {
+  const ns = env.K8S_NAMESPACE;
+  // Promise.all (not allSettled) so non-404 K8s errors propagate to the caller.
+  await Promise.all([
+    appsV1Api()
+      .deleteNamespacedDeployment({ name: INLINE_HARNESS_NAME, namespace: ns })
+      .catch((err: unknown) => { if (!isNotFound(err)) throw err; }),
+    coreApi()
+      .deleteNamespacedService({ name: INLINE_HARNESS_NAME, namespace: ns })
+      .catch((err: unknown) => { if (!isNotFound(err)) throw err; }),
+  ]);
 }
