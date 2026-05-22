@@ -89,7 +89,7 @@ export function useOpencodeThread(
   // (reaped / automation sessions). The /messages route returns the live thread
   // when reachable, else the last-known Session.history snapshot.
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || harnessSessionId) return;
     let cancelled = false;
     void (async () => {
       try {
