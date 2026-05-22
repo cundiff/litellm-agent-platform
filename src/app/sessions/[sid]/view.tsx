@@ -2126,22 +2126,14 @@ function Composer({
   );
 
   return (
-    <div
-      className={`relative border rounded-xl shadow-sm bg-background overflow-hidden focus-within:ring-1 focus-within:ring-ring focus-within:border-ring transition-all ${
-        isDragOver
-          ? "border-ring ring-1 ring-ring"
-          : "border-border"
-      }`}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={(e) => { void handleDrop(e); }}
-    >
-      {/* Skill slash-command dropdown */}
+    <div className="relative">
+      {/* Skill slash-command dropdown — outside overflow-hidden inner div */}
       {slashOpen && (
         <div
           ref={dropdownRef}
           className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-xl border border-border bg-background shadow-lg overflow-hidden"
         >
+
           {filteredSkills.length === 0 ? (
             <p className="px-4 py-3 text-[12px] text-muted-foreground">No skills match &ldquo;{slashFilter}&rdquo;</p>
           ) : (
@@ -2176,6 +2168,15 @@ function Composer({
           )}
         </div>
       )}
+
+      <div
+        className={`border rounded-xl shadow-sm bg-background overflow-hidden focus-within:ring-1 focus-within:ring-ring focus-within:border-ring transition-all ${
+          isDragOver ? "border-ring ring-1 ring-ring" : "border-border"
+        }`}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={(e) => { void handleDrop(e); }}
+      >
 
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-2 px-3 pt-3">
@@ -2276,6 +2277,7 @@ function Composer({
           )}
         </div>
       </div>
+    </div>
     </div>
   );
 }
