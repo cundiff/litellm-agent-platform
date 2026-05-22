@@ -1064,6 +1064,7 @@ export const HARNESS_CLAUDE_CODE = "claude-code";
 export const HARNESS_CODEX = "codex";
 export const HARNESS_HERMES = "hermes";
 export const HARNESS_GEMINI = "gemini";
+export const HARNESS_EXECUTOR = "__executor__";
 export const TUI_HARNESSES: ReadonlySet<string> = new Set([
   HARNESS_CLAUDE_CODE,
   HARNESS_CODEX,
@@ -1099,6 +1100,7 @@ export function resolveHarnessImage(
     K8S_HARNESS_IMAGE_CODEX?: string;
     K8S_HARNESS_IMAGE_HERMES?: string;
     K8S_HARNESS_IMAGE_GEMINI?: string;
+    K8S_HARNESS_IMAGE_EXECUTOR?: string;
   },
 ): string {
   const map: Record<string, string | undefined> = {
@@ -1108,6 +1110,7 @@ export function resolveHarnessImage(
     [HARNESS_CODEX]: harnessEnv.K8S_HARNESS_IMAGE_CODEX,
     [HARNESS_HERMES]: harnessEnv.K8S_HARNESS_IMAGE_HERMES,
     [HARNESS_GEMINI]: harnessEnv.K8S_HARNESS_IMAGE_GEMINI,
+    [HARNESS_EXECUTOR]: harnessEnv.K8S_HARNESS_IMAGE_EXECUTOR,
   };
   // `||` (not `??`): an empty string for a per-harness var must also fall
   // back to the global default. Otherwise an accidentally-blanked secret

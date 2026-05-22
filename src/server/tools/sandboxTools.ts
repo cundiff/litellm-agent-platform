@@ -3,7 +3,7 @@ import { fetch } from "undici";
 import { prisma } from "@/server/db";
 import { env } from "@/server/env";
 import { runTask, waitHttpReady, waitRunningGetUrl } from "@/server/k8s";
-import type { AgentRow } from "@/server/types";
+import { HARNESS_EXECUTOR, type AgentRow } from "@/server/types";
 
 const EXECUTE_TIMEOUT_MS = 300_000;
 
@@ -23,7 +23,7 @@ export async function provisionSandbox(
     return `sandbox '${name}' ready`;
   }
 
-  const { task_arn } = await runTask({ agent, session_id });
+  const { task_arn } = await runTask({ agent: { ...agent, harness_id: HARNESS_EXECUTOR }, session_id });
 
   await prisma.session.update({
     where: { session_id },
