@@ -32,6 +32,7 @@ import { prisma } from "@/server/db";
 import { env } from "@/server/env";
 import {
   buildSkillSandboxFiles,
+  getInlineHarnessPodUrl,
   inlineHarnessUrl,
   runTask,
   waitHttpReady,
@@ -651,11 +652,12 @@ export const POST = wrap<RouteContext>(async (req, ctx) => {
   // Fast path for brain-inline: no pod needed — delegate to a shared harness server.
   if (agent.harness_id === HARNESS_BRAIN_INLINE) {
     // Prefer an explicit env var override (local dev / EKS with manual config).
-    // Fall back to the deterministic cluster-internal DNS for the brain-inline
-    // Deployment that the admin settings page can create on demand.
+    // In-cluster: resolve to the specific pod IP so this session is pinned to
+    // the currently-active pod. The reconciler uses sandbox_url to detect when
+    // a pod is fully drained and safe to delete after a rolling deploy.
     const inlineUrl =
       process.env.CLAUDE_CODE_INLINE_URL ||
-      (env.IN_CLUSTER ? inlineHarnessUrl() : null);
+      (env.IN_CLUSTER ? await getInlineHarnessPodUrl() : null);
     if (!inlineUrl) {
       await prisma.session.update({
         where: { session_id: session.session_id },

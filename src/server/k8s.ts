@@ -1353,6 +1353,120 @@ export function inlineHarnessUrl(): string {
   return `http://${INLINE_HARNESS_NAME}.${env.K8S_NAMESPACE}.svc.cluster.local:${env.CONTAINER_PORT}`;
 }
 
+/**
+ * Returns the pod IP URL for the currently-active brain-inline-harness pod
+ * (i.e. the pod matching the Deployment's current pod-template-hash).
+ *
+ * Storing a pod IP instead of the Service DNS in sandbox_url means messages
+ * for existing sessions always reach the specific pod that owns them — even
+ * during a rolling deploy when old and new pods overlap. The reconciler can
+ * then delete old pods once all sessions on them finish.
+ *
+ * Falls back to the Service DNS when: not running in-cluster, the Deployment
+ * or pod can't be read, or no ready pod is found.
+ */
+export async function getInlineHarnessPodUrl(): Promise<string> {
+  const fallback = inlineHarnessUrl();
+  if (!env.IN_CLUSTER) return fallback;
+  try {
+    const ns = env.K8S_NAMESPACE;
+    // Find the current ReplicaSet owned by our Deployment — it carries the
+    // pod-template-hash that identifies pods belonging to the latest rollout.
+    const rsList = await appsV1Api().listNamespacedReplicaSet({
+      namespace: ns,
+      labelSelector: `app=${INLINE_HARNESS_NAME}`,
+    });
+    const items = ((rsList as unknown as { body?: { items: k8s.V1ReplicaSet[] } }).body?.items
+      ?? (rsList as unknown as { items: k8s.V1ReplicaSet[] }).items
+      ?? []) as k8s.V1ReplicaSet[];
+    // The current RS is the one with desiredReplicas > 0, newest first.
+    const currentRs = items
+      .filter((rs) => (rs.spec?.replicas ?? 0) > 0)
+      .sort((a, b) =>
+        new Date(b.metadata?.creationTimestamp ?? 0).getTime() -
+        new Date(a.metadata?.creationTimestamp ?? 0).getTime(),
+      )[0];
+    const hash = currentRs?.metadata?.labels?.["pod-template-hash"];
+    if (!hash) return fallback;
+
+    const podList = await coreApi().listNamespacedPod({
+      namespace: ns,
+      labelSelector: `app=${INLINE_HARNESS_NAME},pod-template-hash=${hash}`,
+    });
+    const pods = ((podList as unknown as { body?: { items: k8s.V1Pod[] } }).body?.items
+      ?? (podList as unknown as { items: k8s.V1Pod[] }).items
+      ?? []) as k8s.V1Pod[];
+    const readyPod = pods.find(
+      (p) =>
+        p.status?.phase === "Running" &&
+        p.status.conditions?.some((c) => c.type === "Ready" && c.status === "True"),
+    );
+    if (!readyPod?.status?.podIP) return fallback;
+    const ip = readyPod.status.podIP;
+    const hostPart = ip.includes(":") ? `[${ip}]` : ip;
+    return `http://${hostPart}:${env.CONTAINER_PORT}`;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Lists all brain-inline-harness pods with a non-current pod-template-hash —
+ * i.e. pods left over from a previous rollout that are no longer part of the
+ * active ReplicaSet. Used by the reconciler to reap drained old pods.
+ *
+ * Returns an array of { podName, podIP } for pods that are old and still Running.
+ */
+export async function listStaleInlineHarnessPods(): Promise<Array<{ podName: string; podIP: string }>> {
+  if (!env.IN_CLUSTER) return [];
+  try {
+    const ns = env.K8S_NAMESPACE;
+    const rsList = await appsV1Api().listNamespacedReplicaSet({
+      namespace: ns,
+      labelSelector: `app=${INLINE_HARNESS_NAME}`,
+    });
+    const items = ((rsList as unknown as { body?: { items: k8s.V1ReplicaSet[] } }).body?.items
+      ?? (rsList as unknown as { items: k8s.V1ReplicaSet[] }).items
+      ?? []) as k8s.V1ReplicaSet[];
+    const currentRs = items
+      .filter((rs) => (rs.spec?.replicas ?? 0) > 0)
+      .sort((a, b) =>
+        new Date(b.metadata?.creationTimestamp ?? 0).getTime() -
+        new Date(a.metadata?.creationTimestamp ?? 0).getTime(),
+      )[0];
+    const currentHash = currentRs?.metadata?.labels?.["pod-template-hash"];
+
+    const podList = await coreApi().listNamespacedPod({
+      namespace: ns,
+      labelSelector: `app=${INLINE_HARNESS_NAME}`,
+    });
+    const pods = ((podList as unknown as { body?: { items: k8s.V1Pod[] } }).body?.items
+      ?? (podList as unknown as { items: k8s.V1Pod[] }).items
+      ?? []) as k8s.V1Pod[];
+
+    return pods
+      .filter((p) => {
+        const hash = p.metadata?.labels?.["pod-template-hash"];
+        return (
+          hash !== currentHash &&
+          p.status?.phase === "Running" &&
+          !!p.status?.podIP &&
+          !!p.metadata?.name
+        );
+      })
+      .map((p) => ({ podName: p.metadata!.name!, podIP: p.status!.podIP! }));
+  } catch {
+    return [];
+  }
+}
+
+export async function deleteInlineHarnessPod(podName: string): Promise<void> {
+  await coreApi().deleteNamespacedPod({
+    name: podName,
+    namespace: env.K8S_NAMESPACE,
+  });
+}
+
 export async function getInlineHarnessStatus(): Promise<{
   exists: boolean;
   readyReplicas: number;

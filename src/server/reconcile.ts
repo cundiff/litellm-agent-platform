@@ -27,6 +27,8 @@ import {
   listTaggedTasks,
   readNodePort,
   readPodPhase,
+  deleteInlineHarnessPod,
+  listStaleInlineHarnessPods,
   resolveNodeHost,
   stopTask,
   waitHttpReady,
@@ -243,6 +245,41 @@ async function sweepStaleWarmTasks(now: number): Promise<number> {
   return killed;
 }
 
+/**
+ * Reap stale brain-inline-harness pods left over from a rolling deploy.
+ *
+ * After a deploy the old pod keeps running (terminationGracePeriodSeconds=600)
+ * serving sessions pinned to its IP. Once all those sessions finish (status
+ * no longer "ready"), the pod is safe to delete. This sweep finds such pods
+ * and removes them so they don't linger indefinitely.
+ */
+async function sweepStaleInlineHarnessPods(): Promise<number> {
+  const stalePods = await listStaleInlineHarnessPods();
+  if (stalePods.length === 0) return 0;
+
+  let reaped = 0;
+  for (const { podName, podIP } of stalePods) {
+    const podUrl = `http://${podIP}:${env.CONTAINER_PORT}`;
+    // Count sessions that are still active on this pod IP.
+    const activeSessions = await prisma.session.count({
+      where: {
+        sandbox_url: podUrl,
+        status: "ready",
+      },
+    });
+    if (activeSessions > 0) continue;
+
+    try {
+      await deleteInlineHarnessPod(podName);
+      console.log(`reconcile: reaped stale inline harness pod ${podName} (no active sessions)`);
+      reaped += 1;
+    } catch (e) {
+      console.warn(`reconcile: failed to delete stale inline harness pod ${podName}:`, e);
+    }
+  }
+  return reaped;
+}
+
 export async function reconcileOrphans(): Promise<ReconcileResult> {
   const tasks = await listTaggedTasks();
   const managed = tasks.filter((t) => t.session_id);
@@ -436,6 +473,7 @@ export async function reconcileOrphans(): Promise<ReconcileResult> {
 
   const warm_orphans_stopped = await sweepWarmOrphans(warm_tagged, now);
   const warm_stale_killed = await sweepStaleWarmTasks(now);
+  const inline_pods_reaped = await sweepStaleInlineHarnessPods();
 
   return {
     inspected,
@@ -445,6 +483,7 @@ export async function reconcileOrphans(): Promise<ReconcileResult> {
     warm_orphans_stopped,
     ghost_killed,
     warm_stale_killed,
+    inline_pods_reaped,
   };
 }
 

@@ -893,6 +893,9 @@ export interface ReconcileResult {
   // their Sandboxes deleted. Marked dead so topUpWarmPool reprovisions them
   // with the correct env.
   warm_stale_killed: number;
+  // Stale brain-inline-harness pods from previous rollouts that have no
+  // remaining active sessions — deleted so they don't linger post-deploy.
+  inline_pods_reaped: number;
 }
 
 // must export:
