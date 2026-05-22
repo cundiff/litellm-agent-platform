@@ -765,6 +765,9 @@ export interface AutomationRunRow {
   error: string | null;
   started_at: string;
   finished_at: string | null;
+  // Present only on the single-run detail fetch.
+  automation_instruction?: string | null;
+  automation_cron?: string | null;
 }
 
 export function listAutomationRuns(
@@ -775,6 +778,16 @@ export function listAutomationRuns(
   return api<AutomationRunRow[]>(
     "GET",
     `/v1/managed_agents/agents/${encodeURIComponent(agentId)}/automation-runs${qs}`,
+  );
+}
+
+export function getAutomationRun(
+  agentId: string,
+  runId: string,
+): Promise<AutomationRunRow> {
+  return api<AutomationRunRow>(
+    "GET",
+    `/v1/managed_agents/agents/${encodeURIComponent(agentId)}/automation-runs/${encodeURIComponent(runId)}`,
   );
 }
 
