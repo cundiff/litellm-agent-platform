@@ -73,6 +73,9 @@ async function recoverBrainInlineSession(
     (env.IN_CLUSTER ? inlineHarnessUrl() : null);
   if (!inlineUrl) throw new HttpError(503, "CLAUDE_CODE_INLINE_URL not configured");
 
+  // Surface harness unavailability as 503 (retryable) not 500 (opaque crash).
+  // Callers should retry after a few seconds — pod replacement windows are short.
+
   console.log(`[opencode-proxy] session=${session_id} recovery=start old_harness_session_id=${old_harness_session_id}`);
 
   // Best-effort cleanup of the old (now-dead) harness session.
@@ -85,15 +88,22 @@ async function recoverBrainInlineSession(
     ? (rawProjects as Array<{ id: string; name: string; description: string; repo_url?: string }>)
     : [];
 
-  const new_harness_session_id = await harnessCreateSession({
-    sandbox_url: inlineUrl,
-    title: "recovery",
-    files: Array.isArray(rawFiles) ? (rawFiles as SandboxFileSpec[]) : undefined,
-    sandbox_tools: true,
-    projects,
-    agent_id: row.agent.agent_id,
-    platform_session_id: session_id,
-  });
+  let new_harness_session_id: string;
+  try {
+    new_harness_session_id = await harnessCreateSession({
+      sandbox_url: inlineUrl,
+      title: "recovery",
+      files: Array.isArray(rawFiles) ? (rawFiles as SandboxFileSpec[]) : undefined,
+      sandbox_tools: true,
+      projects,
+      agent_id: row.agent.agent_id,
+      platform_session_id: session_id,
+    });
+  } catch (e) {
+    // Harness unreachable — pod still replacing. Throw 503 so proxy surfaces it
+    // as retryable rather than opaque 500.
+    throw new HttpError(503, `harness unavailable during recovery (pod replacement in progress): ${e instanceof Error ? e.message : String(e)}`);
+  }
   console.log(`[opencode-proxy] session=${session_id} recovery=session_created new_harness_session_id=${new_harness_session_id}`);
 
   // Update DB + cache with the new harness_session_id.

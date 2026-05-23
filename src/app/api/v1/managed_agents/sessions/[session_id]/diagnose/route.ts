@@ -565,6 +565,42 @@ export const GET = wrap(async (req: Request, ctx: { params: Promise<{ session_id
 
   const ns = env.K8S_NAMESPACE;
   const taskArn = session.task_arn;
+  const isBrainInline = agent?.harness_id === "claude-code-brain-inline";
+
+  // For brain-inline sessions: look up the shared harness pod by label selector
+  // instead of task_arn (which is null — no per-session pod). The executor pod
+  // (if any) is found via litellm-session-id label.
+  const brainInlinePodResult = isBrainInline
+    ? await tryK8s("brain-inline-harness pod", async () => {
+        const list = await coreApi().listNamespacedPod({
+          namespace: ns,
+          labelSelector: "app=brain-inline-harness",
+        });
+        const items = ((list as unknown as { body?: { items: k8s.V1Pod[] } }).body?.items
+          ?? (list as unknown as { items: k8s.V1Pod[] }).items ?? []) as k8s.V1Pod[];
+        const running = items.find(
+          (p) => !p.metadata?.deletionTimestamp && p.status?.phase === "Running",
+        );
+        if (!running) throw new Error("no running brain-inline-harness pod found");
+        return running;
+      })
+    : null;
+
+  // For brain-inline: also look up the executor pod by session label.
+  const executorPodResult = isBrainInline
+    ? await tryK8s("executor pod", () =>
+        coreApi().listNamespacedPod({
+          namespace: ns,
+          labelSelector: `litellm-session-id=${session.session_id}`,
+        }).then((list) => {
+          const items = ((list as unknown as { body?: { items: k8s.V1Pod[] } }).body?.items
+            ?? (list as unknown as { items: k8s.V1Pod[] }).items ?? []) as k8s.V1Pod[];
+          const pod = items.find((p) => p.status?.phase !== "Succeeded");
+          if (!pod) throw new Error("no executor pod found for session");
+          return pod;
+        }),
+      )
+    : null;
 
   // Fan out all the k8s reads + warm-pool aggregation in parallel. Each one is
   // independently failure-tolerant — a NotFound or transient apiserver error
@@ -576,11 +612,14 @@ export const GET = wrap(async (req: Request, ctx: { params: Promise<{ session_id
     podLogsResult,
     warmCounts,
   ] = await Promise.all([
-    taskArn
-      ? tryK8s("pod", () =>
-          coreApi().readNamespacedPod({ name: taskArn, namespace: ns }),
-        )
-      : Promise.resolve<SectionResult<k8s.V1Pod>>({ notFound: true }),
+    // For brain-inline, use the shared harness pod result; for sandbox sessions use task_arn.
+    isBrainInline
+      ? (brainInlinePodResult ?? Promise.resolve<SectionResult<k8s.V1Pod>>({ notFound: true }))
+      : taskArn
+        ? tryK8s("pod", () =>
+            coreApi().readNamespacedPod({ name: taskArn, namespace: ns }),
+          )
+        : Promise.resolve<SectionResult<k8s.V1Pod>>({ notFound: true }),
     taskArn
       ? tryK8s<SandboxCRPayload>("sandbox CR", () =>
           customApi().getNamespacedCustomObject({
@@ -600,16 +639,26 @@ export const GET = wrap(async (req: Request, ctx: { params: Promise<{ session_id
           }),
         )
       : Promise.resolve<SectionResult<k8s.V1Service>>({ notFound: true }),
-    taskArn
+    // For brain-inline, fetch logs from the shared harness pod.
+    isBrainInline && "ok" in (brainInlinePodResult ?? {})
       ? tryK8s("pod logs", () =>
           coreApi().readNamespacedPodLog({
-            name: taskArn,
+            name: ((brainInlinePodResult as { ok: true; value: k8s.V1Pod }).value).metadata!.name!,
             namespace: ns,
             container: HARNESS_CONTAINER_NAME,
             tailLines: POD_LOG_TAIL_LINES,
           }),
         )
-      : Promise.resolve<SectionResult<string>>({ notFound: true }),
+      : taskArn
+        ? tryK8s("pod logs", () =>
+            coreApi().readNamespacedPodLog({
+              name: taskArn,
+              namespace: ns,
+              container: HARNESS_CONTAINER_NAME,
+              tailLines: POD_LOG_TAIL_LINES,
+            }),
+          )
+        : Promise.resolve<SectionResult<string>>({ notFound: true }),
     prisma.warmTask.groupBy({
       by: ["status"],
       where: { agent_id: session.agent_id },
@@ -871,6 +920,17 @@ export const GET = wrap(async (req: Request, ctx: { params: Promise<{ session_id
     warm_pool: warmPool,
     harness_probe: harnessProbe,
     detected_issues: detectedIssues,
+    // brain-inline specific: shared harness pod + per-session executor pod
+    ...(isBrainInline ? {
+      brain_inline: {
+        harness_pod: "ok" in (brainInlinePodResult ?? {})
+          ? { name: ((brainInlinePodResult as { ok: true; value: k8s.V1Pod }).value).metadata?.name, phase: ((brainInlinePodResult as { ok: true; value: k8s.V1Pod }).value).status?.phase }
+          : { exists: false },
+        executor_pod: executorPodResult && "ok" in executorPodResult
+          ? { name: executorPodResult.value.metadata?.name, phase: executorPodResult.value.status?.phase }
+          : { exists: false },
+      },
+    } : {}),
     // We can't reach Render's log API from inside the deployed platform
     // itself — fetch separately via the Render dashboard or `render logs`.
     notes: {

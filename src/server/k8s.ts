@@ -1423,6 +1423,7 @@ export async function getInlineHarnessPodUrl(): Promise<string> {
       ?? []) as k8s.V1Pod[];
     const readyPod = pods.find(
       (p) =>
+        !p.metadata?.deletionTimestamp &&          // exclude terminating pods
         p.status?.phase === "Running" &&
         p.status.conditions?.some((c) => c.type === "Ready" && c.status === "True"),
     );

@@ -701,16 +701,32 @@ export const POST = wrap<RouteContext>(async (req, ctx) => {
     const inlineSkillFiles = body.skill_ids?.length
       ? await buildSkillSandboxFiles(body.skill_ids)
       : [];
-    const harness_session_id = await harnessCreateSession({
-      sandbox_url: inlineUrl,
-      title: body.title ?? "session",
-      files: [...sandboxFiles, ...inlineSkillFiles],
-      sandbox_tools: true,
-      projects,
-      agent_id: agent.agent_id,
-      mcp_servers: mcpServers,
-      platform_session_id: session.session_id,
-    });
+    let harness_session_id: string;
+    try {
+      harness_session_id = await harnessCreateSession({
+        sandbox_url: inlineUrl,
+        title: body.title ?? "session",
+        files: [...sandboxFiles, ...inlineSkillFiles],
+        sandbox_tools: true,
+        projects,
+        agent_id: agent.agent_id,
+        mcp_servers: mcpServers,
+        platform_session_id: session.session_id,
+      });
+    } catch (harnessErr) {
+      // Harness temporarily unreachable (pod replacement in progress). Mark
+      // session failed and return 503 so the client can retry rather than
+      // surfacing an opaque 500.
+      console.warn(`brain-inline: harnessCreateSession failed for ${session.session_id}:`, harnessErr);
+      await prisma.session.update({
+        where: { session_id: session.session_id },
+        data: { status: "failed", failure_reason: "harness unavailable — pod replacement in progress" },
+      }).catch(() => {});
+      return Response.json(
+        { error: "harness unavailable — pod is being replaced, retry in a few seconds" },
+        { status: 503 },
+      );
+    }
 
     await prisma.session.update({
       where: { session_id: session.session_id },
