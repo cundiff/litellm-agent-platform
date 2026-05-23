@@ -92,14 +92,21 @@ const ALLOW_OUT: EgressRule[] = (process.env.EGRESS_ALLOW_OUT ?? "")
 const DENY_OUT: EgressRule[] = (process.env.EGRESS_DENY_OUT ?? "")
   .split(",").map(parseRule).filter((r): r is EgressRule => r !== null);
 
+// When no allow/deny list is configured, decide the default. Legacy behaviour
+// is allow-all; flipping EGRESS_DEFAULT_DENY=true makes the default deny-all so
+// an agent with no egress config can't reach arbitrary hosts (the secure end
+// state once existing agents are backfilled — see the phased rollout).
+const EGRESS_DEFAULT_DENY = process.env.EGRESS_DEFAULT_DENY === "true";
+
 function isEgressAllowed(host: string): boolean {
   if (ALLOW_OUT.length > 0) return ALLOW_OUT.some((r) => matchesRule(host, r));
   if (DENY_OUT.length > 0) return !DENY_OUT.some((r) => matchesRule(host, r));
-  return true;
+  return !EGRESS_DEFAULT_DENY;
 }
 
 if (ALLOW_OUT.length > 0) console.log(`[vault] egress allow-list: ${process.env.EGRESS_ALLOW_OUT}`);
 if (DENY_OUT.length > 0) console.log(`[vault] egress deny-list: ${process.env.EGRESS_DENY_OUT}`);
+console.log(`[vault] egress default: ${EGRESS_DEFAULT_DENY ? "DENY (host-scoped swap enforced)" : "allow (legacy)"}`);
 
 // Maximum number of interception records retained in memory. Old entries
 // drop off once the buffer is full — this is a debug aid, not an audit log.
@@ -184,16 +191,26 @@ function realTail(value: string): string {
   return value.slice(-2);
 }
 
-// 1-2. Stubs from env.
+// 1-2. Stubs from env. Each REAL_<KEY> may carry an optional HOST_<KEY> giving
+// the egress rules the credential is allowed to be swapped into — host-scoping
+// the swap so a stub bounced off an unrelated host never yields the real value.
 const KV = new Map<string, string>();
+// stub → host rules it may be swapped into. Absent ⇒ "unbound" (see swap()).
+const STUB_TO_HOSTS = new Map<string, EgressRule[]>();
 const stubLines: string[] = [];
 for (const [k, v] of Object.entries(process.env)) {
   if (!k.startsWith("REAL_") || !v) continue;
-  const ns = k.slice(5).toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const cred = k.slice(5);
+  const ns = cred.toLowerCase().replace(/[^a-z0-9]+/g, "_");
   const stub = `stub_${ns}_${randomBytes(4).toString("hex")}`;
   KV.set(stub, v);
-  STUB_TO_CRED.set(stub, k.slice(5));
-  stubLines.push(`${k.slice(5)}=${stub}`);
+  STUB_TO_CRED.set(stub, cred);
+  const hostSpec = process.env[`HOST_${cred}`];
+  if (hostSpec) {
+    const rules = hostSpec.split(",").map(parseRule).filter((r): r is EgressRule => r !== null);
+    if (rules.length > 0) STUB_TO_HOSTS.set(stub, rules);
+  }
+  stubLines.push(`${cred}=${stub}`);
 }
 console.log(`[vault] ${KV.size} secret(s) registered`);
 
@@ -257,16 +274,30 @@ async function leafFor(host: string) {
 }
 
 // 5. Proxy.
-function swap(s: string): { out: string; hits: string[] } {
+// Substitute every stub that (a) appears in `s` and (b) is allowed to be sent
+// to `host`. A credential is allowed when it's bound to a host rule that matches
+// `host`; an UNBOUND credential (no HOST_<KEY> supplied) falls back to the
+// EGRESS_DEFAULT_DENY flag — swap-anywhere while we're in legacy mode, refuse
+// once enforcement is on. `blocked` names stubs we declined to swap so the
+// caller can log the (likely-exfil) attempt.
+function swap(s: string, host: string): { out: string; hits: string[]; blocked: string[] } {
   let out = s;
   const hits: string[] = [];
+  const blocked: string[] = [];
   for (const [stub, real] of KV) {
-    if (out.includes(stub)) {
-      out = out.split(stub).join(real);
-      hits.push(stub);
+    if (!out.includes(stub)) continue;
+    const rules = STUB_TO_HOSTS.get(stub);
+    const allowed = rules
+      ? rules.some((r) => matchesRule(host, r))
+      : !EGRESS_DEFAULT_DENY;
+    if (!allowed) {
+      blocked.push(stub);
+      continue;
     }
+    out = out.split(stub).join(real);
+    hits.push(stub);
   }
-  return { out, hits };
+  return { out, hits, blocked };
 }
 
 const isTextLike = (ct: string) =>
@@ -427,11 +458,13 @@ proxy.on("connect", async (req, socket) => {
 
       const hdrs: Record<string, string> = {};
       const hits: string[] = [];
+      const blocked: string[] = [];
       for (const [k, v] of Object.entries(areq.headers)) {
         if (v === undefined) continue;
         const val = Array.isArray(v) ? v.join(", ") : v;
-        const r = swap(val);
+        const r = swap(val, host);
         hits.push(...r.hits);
+        blocked.push(...r.blocked);
         hdrs[k] = r.out;
       }
       hdrs.host = host + (port !== 443 ? `:${port}` : "");
@@ -443,8 +476,9 @@ proxy.on("connect", async (req, socket) => {
       const ce = String(areq.headers["content-encoding"] ?? "").toLowerCase().trim();
       const identityEnc = ce === "" || ce === "identity";
       if (isTextLike(ct) && identityEnc && body.length > 0) {
-        const r = swap(body.toString("utf8"));
+        const r = swap(body.toString("utf8"), host);
         hits.push(...r.hits);
+        blocked.push(...r.blocked);
         body = Buffer.from(r.out);
       } else if (!identityEnc && body.length > 0) {
         console.warn(`[vault] ${areq.method} ${host}${areq.url} body content-encoding=${ce} — skipping body swap`);
@@ -453,6 +487,17 @@ proxy.on("connect", async (req, socket) => {
       const uniqueHits = [...new Set(hits)];
       if (uniqueHits.length) {
         console.log(`[vault] ${areq.method} ${host}${areq.url} swapped ${uniqueHits.length} stub(s)`);
+      }
+      // A stub that appeared in the request but isn't bound to this host is a
+      // likely exfil attempt (or a misconfigured binding). Log loudly — the stub
+      // name is safe to print; the real value is never exposed.
+      const uniqueBlocked = [...new Set(blocked)].filter((s) => !uniqueHits.includes(s));
+      if (uniqueBlocked.length) {
+        console.warn(
+          `[vault] ${areq.method} ${host}${areq.url} did NOT swap ${uniqueBlocked.length} stub(s) not bound to this host: ${uniqueBlocked
+            .map((s) => STUB_TO_CRED.get(s) ?? "unknown")
+            .join(", ")}`,
+        );
       }
       // Persist a structured record of every proxied request — including
       // zero-swap ones — so the inspector can answer both "did vault swap?"
