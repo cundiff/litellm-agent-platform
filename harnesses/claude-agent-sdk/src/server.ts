@@ -88,7 +88,8 @@ const RECORDING_MCP = buildRecordingMcpServer();
 // can schedule itself. Null when the LAP env isn't set (same as memory).
 const AUTOMATIONS_MCP = buildAutomationsMcpServer();
 // In-process MCP exposing post_slack_message so the agent can send Slack
-// updates. Null when SLACK_BOT_TOKEN is not set (set via CONTAINER_ENV_SLACK_BOT_TOKEN).
+// updates. Always registered; when SLACK_BOT_TOKEN is unset the tool returns
+// an actionable error at call time (set via CONTAINER_ENV_SLACK_BOT_TOKEN).
 const SLACK_MCP = buildSlackMcpServer();
 
 // ---------------------------------------------------------------------------
@@ -399,14 +400,14 @@ async function runTurn(
             ...(AUTOMATIONS_MCP ? { "lap-automations": AUTOMATIONS_MCP } : {}),
             "lap-screenshot": SCREENSHOT_MCP,
             "lap-recording": RECORDING_MCP,
-            ...(SLACK_MCP ? { "lap-slack": SLACK_MCP } : {}),
+            "lap-slack": SLACK_MCP,
           },
           allowedTools: [
             ...(MEMORY_MCP ? [...MEMORY_TOOL_NAMES] : []),
             ...(AUTOMATIONS_MCP ? [...AUTOMATION_TOOL_NAMES] : []),
             ...SCREENSHOT_TOOL_NAMES,
             ...RECORDING_TOOL_NAMES,
-            ...(SLACK_MCP ? [...SLACK_TOOL_NAMES] : []),
+            ...SLACK_TOOL_NAMES,
           ],
         }),
     // Resume the SDK's persisted session if we have one — that's how the

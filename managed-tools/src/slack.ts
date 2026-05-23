@@ -5,9 +5,10 @@
  * description + handler): `post_slack_message`. When the agent wants to send
  * a status update, notify a user, or post to a channel, it calls this tool.
  *
- * Same shape and env contract as memory.ts / automations.ts. If the env is
- * incomplete, `slackEnv()` returns null and the adapter skips registering the
- * tool — the harness boots cleanly without it.
+ * Same shape and env contract as memory.ts / automations.ts. The tool is
+ * always registered; if the env is incomplete the handler returns an
+ * actionable error at call time (see `slackEnvStatus()`), so the agent can
+ * tell the user Slack is unconfigured instead of the tool silently vanishing.
  *
  * Env contract (read at tool-call time):
  *
@@ -52,9 +53,9 @@ export function slackEnv(): SlackEnv | null {
   if (!slackEnvWarnedOnce) {
     slackEnvWarnedOnce = true;
     console.warn(
-      `[slack] disabled — missing env: ${status.missing.join(", ")}. ` +
-        `post_slack_message will NOT be registered. ` +
-        `Fix: set CONTAINER_ENV_SLACK_BOT_TOKEN on the platform.`,
+      `[slack] missing env: ${status.missing.join(", ")}. ` +
+        `post_slack_message stays registered but returns a configuration error ` +
+        `until you set CONTAINER_ENV_SLACK_BOT_TOKEN on the platform.`,
     );
   }
   return null;
