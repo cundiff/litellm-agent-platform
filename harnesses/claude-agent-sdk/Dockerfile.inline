@@ -25,7 +25,9 @@ RUN cd harnesses/claude-agent-sdk && \
     npm install --legacy-peer-deps && \
     # Force-install the linux-x64 native claude binary (optional dep may be skipped)
     npm install --cpu=x64 --os=linux --legacy-peer-deps \
-        @anthropic-ai/claude-agent-sdk-linux-x64@0.2.138
+        @anthropic-ai/claude-agent-sdk-linux-x64@0.2.138 && \
+    chmod +x node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude && \
+    echo "claude binary:" && ls -la node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude
 
 # Build TypeScript
 COPY harnesses/claude-agent-sdk/src/ ./harnesses/claude-agent-sdk/src/
@@ -47,6 +49,8 @@ COPY --from=builder /build/managed-tools/ /build/managed-tools/
 COPY --from=builder /build/harnesses/claude-agent-sdk/dist/ ./dist/
 COPY --from=builder /build/harnesses/claude-agent-sdk/node_modules/ ./node_modules/
 
+# Point directly at the native binary so resolveClaudeBinary() finds it immediately
+ENV CLAUDE_CODE_EXECUTABLE=/build/harnesses/claude-agent-sdk/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude
 ENV PORT=10000
 EXPOSE 10000
 
