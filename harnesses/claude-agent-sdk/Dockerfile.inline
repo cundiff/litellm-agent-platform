@@ -40,7 +40,9 @@ FROM node:20-bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git ca-certificates curl bash jq \
-    && rm -rf /var/lib/apt/lists/*
+      libstdc++6 libc6 \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2 2>/dev/null || true
 
 # Mirror the builder's directory structure so the file: symlink
 # node_modules/@lap/managed-tools → ../../../../managed-tools resolves correctly.
@@ -49,6 +51,10 @@ WORKDIR /build/harnesses/claude-agent-sdk
 COPY --from=builder /build/managed-tools/ /build/managed-tools/
 COPY --from=builder /build/harnesses/claude-agent-sdk/dist/ ./dist/
 COPY --from=builder /build/harnesses/claude-agent-sdk/node_modules/ ./node_modules/
+
+# Verify the claude binary is executable
+RUN file ./node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude && \
+    ldd ./node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude 2>&1 | head -20 || true
 
 # Point directly at the native binary so resolveClaudeBinary() finds it immediately
 ENV CLAUDE_CODE_EXECUTABLE=/build/harnesses/claude-agent-sdk/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude
