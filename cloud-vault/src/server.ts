@@ -524,7 +524,11 @@ proxy.on("connect", async (req, socket) => {
     const givenBuf = Buffer.from(given, "utf8");
     const expectedBuf = Buffer.from(PROXY_TOKEN, "utf8");
     if (givenBuf.length !== expectedBuf.length || !timingSafeEqual(givenBuf, expectedBuf)) {
-      socket.end("HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"cloud-vault\"\r\nProxy-Agent: cloud-vault\r\n\r\n");
+      // Send 407 then re-inject socket into HTTP server so the client's
+      // authenticated retry (on the same TCP connection) is handled correctly.
+      // Destroying/ending the socket causes git to see "Proxy CONNECT aborted".
+      socket.write("HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"cloud-vault\"\r\nProxy-Connection: keep-alive\r\nProxy-Agent: cloud-vault\r\n\r\n");
+      proxy.emit("connection", socket);
       return;
     }
   }
