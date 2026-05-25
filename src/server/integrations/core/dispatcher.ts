@@ -31,6 +31,7 @@
 
 import { prisma } from "@/server/db";
 import { env } from "@/server/env";
+import { buildSessionUrl } from "@/server/sessionUrl";
 import { createOpencodeClient } from "@opencode-ai/sdk/client";
 
 import {
@@ -227,19 +228,6 @@ function findIntegrationSession(session_id: string) {
       binding: { include: { install: true, agent: true } },
     },
   });
-}
-
-/**
- * Resolve the public LAP URL for a session page. Prefers `LAP_BASE_URL`
- * (the external https URL the UI is served from) and falls back to
- * `BASE_URL`. Returns `null` when neither is set so the integration omits
- * the link rather than emitting a localhost URL into a production channel.
- */
-function buildSessionUrl(session_id: string): string | null {
-  const base = process.env.LAP_BASE_URL || process.env.BASE_URL;
-  if (!base) return null;
-  const host = base.replace(/\/+$/, "");
-  return `${host}/sessions/${encodeURIComponent(session_id)}`;
 }
 
 /**
