@@ -291,7 +291,7 @@ export async function POST(req: Request, ctx: RouteContext) {
       // can't know its LAP session_id from env. Append the id tag to the last
       // text part of every subsequent turn so it's always in the immediate
       // user message (a separate preamble part can be lost in multi-part rendering).
-      const tag = `\n\n[SYSTEM: Your LAP session_id is ${session_id} — pass this exact string when calling sandbox_provision]`;
+      const tag = `\n\n[SYSTEM: Your LAP session_id is ${session_id} — pass this exact string when calling sandbox_provision]\n<lap_session_id>${session_id}</lap_session_id>`;
       const lastTextIdx = parts.map(p => p.type).lastIndexOf("text");
       if (lastTextIdx >= 0) {
         parts = parts.map((p, i) =>
