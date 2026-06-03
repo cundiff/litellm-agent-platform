@@ -58,8 +58,6 @@ import {
   getSession,
   getSessionAssessment,
   listSkills,
-  listSessionMessages,
-  sendMessageStream,
 } from "@/ui/lib/api";
 import { type AgentMessage, type PermissionRequest } from "@/shared/agent-state";
 import { AgentAvatar } from "@/ui/components/agent-avatar";
@@ -889,108 +887,68 @@ function MainPanel({
             </>
           )}
         </div>
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <button
-            type="button"
-            onClick={() => session && setReviewerOpen(!reviewerOpen)}
-            disabled={!session}
-            title="Reviewer — one-minute on/off-track assessment for this session"
-            className={`inline-flex items-center gap-1.5 text-[12px] border rounded px-2 py-1 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-              reviewerOpen
-                ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
-                : "border-border text-muted-foreground hover:bg-muted"
-            }`}
-          >
-            <Stethoscope className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">
-              Reviewer{assessment ? `: ${formatAssessmentState(assessment.state)}` : ""}
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => session && setVaultOpen(!vaultOpen)}
-            disabled={!session}
-            title="Vault — credential interception log for this session"
-            className={`inline-flex items-center gap-1.5 text-[12px] border rounded px-2 py-1 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-              vaultOpen
-                ? "bg-violet-50 border-violet-200 text-violet-700 hover:bg-violet-100"
-                : "border-border text-muted-foreground hover:bg-muted"
-            }`}
-          >
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Vault</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => session && setLogOpen(!logOpen)}
-            disabled={!session}
-            title="Session Log — durable event timeline (survives sandbox restarts)"
-            className={`inline-flex items-center gap-1.5 text-[12px] border rounded px-2 py-1 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-              logOpen
-                ? "bg-violet-50 border-violet-200 text-violet-700 hover:bg-violet-100"
-                : "border-border text-muted-foreground hover:bg-muted"
-            }`}
-          >
-            <ScrollText className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Log</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => session && setInspectorOpen(!inspectorOpen)}
-            disabled={!session}
-            title="Inspector — tail the platform envelope + raw harness bus for this session"
-            className={`inline-flex items-center gap-1.5 text-[12px] border rounded px-2 py-1 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-              inspectorOpen
-                ? "bg-violet-50 border-violet-200 text-violet-700 hover:bg-violet-100"
-                : "border-border text-muted-foreground hover:bg-muted"
-            }`}
-          >
-            <Activity className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Inspect</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => session && setDiagnoseOpen(true)}
-            disabled={!session}
-            title="Diagnose — fetch pod, service, node, warm-pool, and harness-probe state"
-            className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground border border-border rounded px-2 py-1 hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            <Stethoscope className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Diagnose</span>
-          </button>
-          <button
-            type="button"
-            onClick={handleRestart}
-            disabled={!canRestart || restarting}
-            title={
-              statusLabel === "creating"
-                ? "Sandbox is still spinning up"
-                : isReady
-                  ? "Restart sandbox (replays history)"
-                  : "Restart sandbox"
-            }
-            className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground border border-border rounded px-2 py-1 hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {restarting ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <RotateCw className="w-3.5 h-3.5" />
-            )}
-            <span className="hidden sm:inline">
-              {restarting ? "Restarting…" : "Restart"}
-            </span>
-          </button>
+        <div className="flex items-center gap-1.5 text-muted-foreground">
           <DropdownMenu>
             <DropdownMenuTrigger
               type="button"
               className="p-1.5 hover:bg-muted rounded"
+              title="Session actions"
             >
               <MoreHorizontal className="w-4 h-4" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" className="min-w-44">
+              <DropdownMenuItem
+                disabled={!session}
+                onSelect={() => session && setReviewerOpen(!reviewerOpen)}
+              >
+                <Stethoscope className="mr-1 size-3.5" />
+                Reviewer{assessment ? `: ${formatAssessmentState(assessment.state)}` : ""}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!session}
+                onSelect={() => session && setVaultOpen(!vaultOpen)}
+              >
+                <ShieldCheck className="mr-1 size-3.5" />
+                Vault
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!session}
+                onSelect={() => session && setLogOpen(!logOpen)}
+              >
+                <ScrollText className="mr-1 size-3.5" />
+                Session log
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!session}
+                onSelect={() => session && setInspectorOpen(!inspectorOpen)}
+              >
+                <Activity className="mr-1 size-3.5" />
+                Inspect
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!session}
+                onSelect={() => session && setDiagnoseOpen(true)}
+              >
+                <Stethoscope className="mr-1 size-3.5" />
+                Diagnose
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!canRestart || restarting}
+                onSelect={() => {
+                  if (canRestart && !restarting) handleRestart();
+                }}
+              >
+                {restarting ? (
+                  <Loader2 className="mr-1 size-3.5 animate-spin" />
+                ) : (
+                  <RotateCw className="mr-1 size-3.5" />
+                )}
+                {restarting ? "Restarting..." : "Restart sandbox"}
+              </DropdownMenuItem>
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 onSelect={() => setDeleteSessionOpen(true)}
+                disabled={!session}
               >
                 <Trash2 className="mr-2 size-3.5" />
                 Delete session
@@ -1996,7 +1954,7 @@ function PartBlock({ part }: { part: HarnessMessagePart }) {
   if (t === "reasoning" || t === "thinking") {
     const text = typeof part.text === "string" ? part.text : "";
     if (!text) return null;
-    return <ReasoningBlock text={text} />;
+    return <ThinkingBlock text={text} />;
   }
   if (t === "tool") {
     return <ToolBlock part={part} />;
@@ -2016,23 +1974,31 @@ function PartBlock({ part }: { part: HarnessMessagePart }) {
   return null;
 }
 
-function ReasoningBlock({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  const preview = text.length > 360 ? text.slice(0, 360) + "…" : text;
+function ThinkingBlock({ text }: { text: string }) {
+  const [open, setOpen] = useState(true);
   return (
-    <div className="border-l-2 border-border pl-3 text-[13px] text-muted-foreground italic leading-relaxed">
+    <div className="rounded-md border border-border bg-muted/30 text-[13px] text-muted-foreground overflow-hidden">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-start gap-1 text-left hover:text-foreground"
+        className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left hover:bg-muted/60 hover:text-foreground transition-colors"
       >
         <ChevronDown
-          className={`w-3 h-3 mt-1 shrink-0 transition-transform ${
+          className={`w-3 h-3 shrink-0 transition-transform ${
             open ? "" : "-rotate-90"
           }`}
         />
-        <span className="whitespace-pre-wrap">{open ? text : preview}</span>
+        <span className="font-medium">Thinking</span>
+        <span className="text-muted-foreground/70">·</span>
+        <span className="text-[11px] text-muted-foreground/80">
+          {open ? "click to collapse" : "click to expand"}
+        </span>
       </button>
+      {open && (
+        <div className="border-t border-border px-3 py-3 italic leading-relaxed whitespace-pre-wrap">
+          {text || "No thinking content available"}
+        </div>
+      )}
     </div>
   );
 }
@@ -2092,7 +2058,7 @@ function ToolBlock({ part }: { part: HarnessMessagePart }) {
     ? status === "running"
       ? "spawning sub agent"
       : "sub agent"
-    : toolName;
+    : formatToolName(toolName);
   const hasDetails = isTask
     ? subParts.length > 0 || output !== undefined
     : input !== undefined || output !== undefined || errorOut !== undefined;
@@ -2106,28 +2072,29 @@ function ToolBlock({ part }: { part: HarnessMessagePart }) {
   const StatusIcon =
     status === "completed" ? Check : status === "error" ? X : Loader2;
 
-  // One clean clickable card per tool call (Cursor-style): collapsed by
-  // default, click to reveal input/output — or, for a subagent, its full work.
+  // SDK-style cards from the old fork: one compact selectable row per tool
+  // call, with details tucked behind a chevron.
   return (
-    <div className="border border-border rounded-md bg-muted/40 text-[13px] overflow-hidden">
+    <div className="rounded-md border border-border bg-muted/15 text-[13px] overflow-hidden">
       <button
         type="button"
         onClick={() => hasDetails && setOpen((v) => !v)}
-        className={`w-full flex items-center gap-2 px-3 py-2 text-left min-w-0 ${
-          hasDetails ? "hover:bg-muted cursor-pointer" : "cursor-default"
+        className={`w-full flex items-center gap-2 px-3 py-2 text-left min-w-0 transition-colors ${
+          hasDetails ? "hover:bg-muted/60 cursor-pointer" : "cursor-default"
         }`}
       >
         <Wrench className="w-3 h-3 text-muted-foreground shrink-0" />
         <span className="mono text-foreground shrink-0">{label}</span>
-        {desc && (
-          <span className="mono text-muted-foreground truncate">{desc}</span>
-        )}
         <StatusIcon
           className={`w-3 h-3 shrink-0 ${statusColor} ${status === "running" ? "animate-spin" : ""}`}
         />
         <span className={`mono text-[11px] shrink-0 ${statusColor}`}>
           {status}
         </span>
+        {desc && (
+          <span className="mono text-muted-foreground truncate">{desc}</span>
+        )}
+        <span className="flex-1" aria-hidden />
         {hasDetails && (
           <ChevronDown
             className={`ml-auto w-3 h-3 shrink-0 text-muted-foreground transition-transform ${
@@ -2139,7 +2106,7 @@ function ToolBlock({ part }: { part: HarnessMessagePart }) {
 
       {open && isTask && (
         // The subagent's own steps + final output, nested under the card.
-        <div className="border-t border-border border-l-2 border-l-amber-300/60 px-3 py-2 flex flex-col gap-2">
+        <div className="border-t border-border border-l-2 border-l-amber-400/70 bg-muted/20 px-3 py-2 flex flex-col gap-2">
           {subParts.length > 0 ? (
             subParts.map((p, i) => (
               <PartBlock key={i} part={p as unknown as HarnessMessagePart} />
@@ -2155,7 +2122,7 @@ function ToolBlock({ part }: { part: HarnessMessagePart }) {
       )}
 
       {open && !isTask && hasDetails && (
-        <div className="border-t border-border px-3 py-2 flex flex-col gap-2">
+        <div className="border-t border-border bg-muted/20 px-3 py-2 flex flex-col gap-2">
           {input !== undefined && <ToolKv label="input" value={input} />}
           {output !== undefined && <ToolKv label="output" value={output} />}
           {errorOut !== undefined && <ToolKv label="error" value={errorOut} />}
@@ -2178,6 +2145,15 @@ function ToolKv({ label, value }: { label: string; value: unknown }) {
       </pre>
     </div>
   );
+}
+
+function formatToolName(toolName: string): string {
+  if (!toolName) return "Tool";
+  return toolName
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 // A permission the agent (or subagent) is blocked on. opencode asks before
@@ -2383,7 +2359,7 @@ function Composer({
     ? "Sandbox not ready yet…"
     : hasInProgress
       ? "Queue a follow up"
-      : "Add a follow up — type / to reference a skill";
+      : "Add a follow up";
 
   // Stage a clipboard / drop / file-picker file onto the attachments list.
   // Validates count + MIME + size client-side so the user gets immediate
@@ -2588,7 +2564,7 @@ function Composer({
           {error ? (
             <span className="text-red-600">{error}</span>
           ) : (
-            currentModel || "Enter to send · Shift+Enter for newline · paste or drag images"
+            currentModel || "Enter to send · Shift+Enter for newline"
           )}
           {activeSkill && (
             <span className="flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 dark:border-blue-800 dark:bg-blue-950">
