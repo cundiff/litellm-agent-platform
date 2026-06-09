@@ -18,7 +18,7 @@ LiteLLM Agent Platform manages:
 
 Select a harness, attach your tools, set a system prompt, and deploy.
 
-> _[ screenshot: select a harness ]_
+<img width="2200" height="1439" alt="Xnapper-2026-06-09-15 34 30" src="https://github.com/user-attachments/assets/d2083454-b7c1-4337-b2c2-4c4ba99991b6" />
 
 1. **Select a harness.** Claude Code, Codex, Hermes, or OpenCode.
 2. **Set it up.** Attach your tools and a system prompt. Your MCP servers and keys are already there from when you signed in.
